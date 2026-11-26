@@ -141,7 +141,7 @@ global g_settings := Map(
     "CloseAdvertisement", 0,            ; 关闭广告提示
     "CloseHelp", 0,                     ; 关闭帮助提示
     "AutoSwitchLanguage", 0,            ; 自动切换语言
-    "AutoCheckUpdate", 1,               ; 自动检查更新
+    "AutoCheckUpdate", 0,               ; 自动检查更新（默认关闭，避免更新覆盖国服修改）
     "SkipUserGroupCheckForFreeUser", 0, ; 非会员用户跳过用户组检查
     "AutoDeleteOldFile", 0,             ; 自动删除旧版本
     "DoroClosing", 0,                   ; 完成后自动关闭Doro
@@ -1207,7 +1207,7 @@ AutoStartNikke() {
     global NikkeW
     global NikkeH
     targetExe := "nikke.exe"
-    if WinExist("ahk_exe " . targetExe) {
+    if FindNikkeWindow() {
         AddLog("NIKKE已经在运行中，跳过启动")
         return
     }
@@ -1225,6 +1225,11 @@ AutoStartNikke() {
             AddLog("找到了NIKKE主窗口！ID: " mainWindowID)
             actualWinTitle := WinGetTitle(mainWindowID)
             AddLog("实际窗口标题是: " actualWinTitle)
+            ;国服启动器界面与国际服不同，按国际服坐标盲点容易误操作，改为提示手动启动
+            if !IsInternationalLauncher(targetExe) {
+                AddLog("检测到非国际服/港澳台服启动器（" . targetExe . "），为避免误操作，请手动启动游戏后再运行脚本。", "Yellow")
+                return
+            }
             ; 激活该窗口
             WinActivate(mainWindowID)
             WinGetClientPos &NikkeX, &NikkeY, &NikkeW, &NikkeH, mainWindowID
@@ -1253,6 +1258,11 @@ AutoStartNikke() {
             break
         }
         else if WinExist("ahk_exe " . targetExe) {
+            ;国服启动器不做自动点击，交给用户手动启动
+            if !IsInternationalLauncher(targetExe) {
+                AddLog("启动器（" . targetExe . "）不是国际服/港澳台服版本，请手动启动游戏后再运行脚本。", "Yellow")
+                return
+            }
             AddLog("启动器已运行但未找到主窗口，等待主窗口出现……")
             ; 等待主窗口出现
             startTime := A_TickCount
@@ -1276,6 +1286,11 @@ AutoStartNikke() {
             sleep 5000
         }
     }
+}
+;tag 判断启动器是否为国际服/港澳台服版本
+IsInternationalLauncher(exeName) {
+    exeName := StrLower(exeName)
+    return (exeName = "nikke_launcher.exe" or exeName = "nikke_launcher_hmt.exe")
 }
 ;tag 脚本关闭NIKKE启动器
 CloseNikkeLauncher() {
@@ -1324,19 +1339,34 @@ CloseNikkeLauncher() {
     AddLog("已关闭NIKKE启动器")
     return true
 }
+;tag 查找NIKKE游戏窗口（国际服/港澳台服/国服通用）
+FindNikkeWindow() {
+    ;国际服与港澳台服的游戏进程名为 nikke.exe
+    if (hwnd := WinExist("ahk_exe nikke.exe"))
+        return hwnd
+    ;国服进程名可能不同，按常见进程名逐一尝试
+    for exeName in ["nikke_cn.exe", "nikke_global.exe"] {
+        if (hwnd := WinExist("ahk_exe " . exeName))
+            return hwnd
+    }
+    ;国服按游戏主窗口标题精确查找（标题：胜利女神：新的希望）
+    savedMode := A_TitleMatchMode
+    SetTitleMatchMode 3
+    hwnd := WinExist("胜利女神：新的希望")
+    SetTitleMatchMode savedMode
+    return hwnd ? hwnd : 0
+}
 ;tag 初始化
 Initialization() {
-    global NikkeX, NikkeY, NikkeW, NikkeH
+    global NikkeX, NikkeY, NikkeW, NikkeH, winID
     LogBox.SetText()
-    targetExe := "nikke.exe"
-    if WinExist("ahk_exe " . targetExe) {
-        global winID := WinExist("ahk_exe " . targetExe)
+    winID := FindNikkeWindow()
+    if winID {
         actualWinTitle := WinGetTitle(winID)
-        AddLog("找到了进程为 '" . targetExe . "' 的窗口！实际窗口标题是: " . actualWinTitle)
-        if actualWinTitle = "胜利女神：新的希望" {
-            MsgBox ("不支持国服，自动关闭！为了各自生活的便利，请不要在公开场合发布本软件国服相关的修改版本，谢谢配合！")
-            ExitApp
-        }
+        AddLog("找到了NIKKE窗口！实际窗口标题是: " . actualWinTitle)
+        ;国服（标题为《胜利女神：新的希望》）不再拦截，仅记录日志
+        if InStr(actualWinTitle, "新的希望")
+            AddLog("检测到国服客户端，已解除国服限制，继续执行。", "Green")
         ;账号限制检查
         if !CheckAccountLimit(winID) {
             AddLog("达到每日运行账号限制，程序即将退出。", "Red")
@@ -1346,9 +1376,9 @@ Initialization() {
         WinActivate(winID)
     }
     else {
-        ;没有找到该进程的窗口
-        MsgBox("没有找到进程为 '" . targetExe . "' 的窗口，初始化失败！")
-        Pause
+        ;没有找到游戏窗口
+        MsgBox("没有找到《胜利女神：NIKKE》的游戏窗口，初始化失败！请先启动游戏并保持窗口打开。")
+        ExitApp
     }
     nikkeID := winID
     WinGetClientPos &NikkeX, &NikkeY, &NikkeW, &NikkeH, nikkeID
@@ -4511,6 +4541,10 @@ GoBack() {
     if (ok := FindText(&X, &Y, NikkeX + 0.658 * NikkeW . " ", NikkeY + 0.639 * NikkeH . " ", NikkeX + 0.658 * NikkeW + 0.040 * NikkeW . " ", NikkeY + 0.639 * NikkeH + 0.066 * NikkeH . " ", 0.4 * PicTolerance, 0.4 * PicTolerance, FindText().PicLib("方舟的图标"), , 0, , , , , TrueRatio, TrueRatio)) {
         return
     }
+    if SimClearPanelFound(&X, &Y) {
+        AddLog("返回前先关掉模拟室的结算面板")
+        DismissSimulationResult
+    }
     ; AddLog("返回")
     Send "{Esc}"
     if (ok := FindText(&X := "wait", &Y := 1, NikkeX + 0.518 * NikkeW . " ", NikkeY + 0.609 * NikkeH . " ", NikkeX + 0.518 * NikkeW + 0.022 * NikkeW . " ", NikkeY + 0.609 * NikkeH + 0.033 * NikkeH . " ", 0.3 * PicTolerance, 0.3 * PicTolerance, FindText().PicLib("带圈白勾"), , , , , , , TrueRatio, TrueRatio)) {
@@ -4767,6 +4801,11 @@ BattleSettlement(currentVictory := 0, modes*) {
             AddLog("[扫荡|活动推关]ESC已命中")
             break
         }
+        ; 模拟室的通关结算面板（国服同样适用）：交给模拟室逻辑点「模拟结束」，避免在这里空转卡死
+        else if (ok := FindText(&X, &Y, NikkeX + 0.364 * NikkeW . " ", NikkeY + 0.323 * NikkeH . " ", NikkeX + 0.364 * NikkeW + 0.272 * NikkeW . " ", NikkeY + 0.323 * NikkeH + 0.558 * NikkeH . " ", 0.2 * PicTolerance, 0.2 * PicTolerance, FindText().PicLib("模拟结束的图标"), , 0, , , , , TrueRatio, TrueRatio)) {
+            AddLog("[模拟室]检测到通关结算面板，交给模拟室流程处理")
+            break
+        }
         ; 基地防御等级提升的页面
         if (ok := FindText(&X, &Y, NikkeX + 0.490 * NikkeW . " ", NikkeY + 0.426 * NikkeH . " ", NikkeX + 0.490 * NikkeW + 0.016 * NikkeW . " ", NikkeY + 0.426 * NikkeH + 0.029 * NikkeH . " ", 0.3 * PicTolerance, 0.3 * PicTolerance, FindText().PicLib("蓝色的右箭头"), , , , , , , TrueRatio, TrueRatio)) {
             Confirm
@@ -4862,7 +4901,16 @@ Challenge() {
 ;tag 返回大厅
 BackToHall(AD := False) {
     ; AddLog("返回大厅")
+    clearTries := 0
     while true {
+        if clearTries < 3 && SimClearPanelFound(&X, &Y) {
+            ; 国服：模拟室的通关结算面板是模态的，不点掉「模拟结束」时点左下角主页/发 Esc 都不会有反应，
+            ; 这里先把它关掉，避免整个流程卡在这种页面上。
+            clearTries += 1
+            AddLog("检测到模拟室结算面板，先关闭", "MAROON")
+            DismissSimulationResult
+            continue
+        }
         if (ok := FindText(&X, &Y, NikkeX + 0.658 * NikkeW . " ", NikkeY + 0.639 * NikkeH . " ", NikkeX + 0.658 * NikkeW + 0.040 * NikkeW . " ", NikkeY + 0.639 * NikkeH + 0.066 * NikkeH . " ", 0.4 * PicTolerance, 0.4 * PicTolerance, FindText().PicLib("方舟的图标"), , 0, , , , , TrueRatio, TrueRatio)) {
             if AD = False {
                 break
@@ -5101,17 +5149,29 @@ ProcessPurchaseList(PurchaseItems, Options := Map()) {
                         Sleep 1000
                     }
                 }
-                ; 点击购买 (带圈白勾)
-                if (FindText(&X := "wait", &Y := 2, NikkeX + 0.506 * NikkeW . " ", NikkeY + 0.786 * NikkeH . " ", NikkeX + 0.506 * NikkeW + 0.088 * NikkeW . " ", NikkeY + 0.786 * NikkeH + 0.146 * NikkeH . " ", 0.3 * PicTolerance, 0.3 * PicTolerance, FindText().PicLib("带圈白勾"), , 0, , , , , TrueRatio, TrueRatio)) {
+                ; 点击购买（国际服认带圈白勾，国服认蓝色主按钮）
+                buyHit := false, buyX := 0, buyY := 0
+                if (ok := FindText(&X := "wait", &Y := 2, NikkeX + 0.506 * NikkeW . " ", NikkeY + 0.786 * NikkeH . " ", NikkeX + 0.506 * NikkeW + 0.088 * NikkeW . " ", NikkeY + 0.786 * NikkeH + 0.146 * NikkeH . " ", 0.3 * PicTolerance, 0.3 * PicTolerance, FindText().PicLib("带圈白勾"), , 0, , , , , TrueRatio, TrueRatio)) {
+                    buyHit := true, buyX := X, buyY := Y
+                }
+                else if FindBlueButton(Round(NikkeX + 0.490 * NikkeW), Round(NikkeY + 0.760 * NikkeH), Round(NikkeX + 0.610 * NikkeW), Round(NikkeY + 0.950 * NikkeH), &bx, &by) {
+                    AddLog("国服：找到蓝色购买按钮")
+                    buyHit := true, buyX := bx, buyY := by
+                }
+                else if FindBlueButton(Round(NikkeX + 0.380 * NikkeW), Round(NikkeY + 0.420 * NikkeH), Round(NikkeX + 0.660 * NikkeW), Round(NikkeY + 0.740 * NikkeH), &bx, &by) {
+                    AddLog("国服：在中间的购买弹窗里找到蓝色购买按钮")
+                    buyHit := true, buyX := bx, buyY := by
+                }
+                if buyHit {
                     Sleep 500
                     AddLog("购买" . Name)
-                    FindText().Click(X, Y, "L")
-                    Sleep 1000
-                    ; 确认并返回商店主界面 (检查左上角百货商店图标)
-                    while !(FindText(&X := "wait", &Y := 1, NikkeX + 0.003 * NikkeW . " ", NikkeY + 0.007 * NikkeH . " ", NikkeX + 0.003 * NikkeW + 0.089 * NikkeW . " ", NikkeY + 0.007 * NikkeH + 0.054 * NikkeH . " ", 0.3 * PicTolerance, 0.3 * PicTolerance, FindText().PicLib("左上角的百货商店"), , 0, , , , , TrueRatio, TrueRatio)) {
-                        Confirm()
-                    }
+                    FindText().Click(buyX, buyY, "L")
+                    Sleep 1500
+                    ; 关掉购买成功的提示，等回到商店主界面
+                    ShopDismissPurchase()
                 }
+                else
+                    AddLog("没找到购买按钮，跳过" . Name, "MAROON")
             }
         } else {
             AddLog(Name . "未找到，跳过购买")
@@ -5361,25 +5421,182 @@ ShopGeneral() {
         "CheckCredit", true,
         "Area", [NikkeX + 0.055 * NikkeW . " ", NikkeY + 0.481 * NikkeH . " ", NikkeX + 0.055 * NikkeW + 0.426 * NikkeW . " ", NikkeY + 0.481 * NikkeH + 0.237 * NikkeH . " "]
     )
-    loop 2 {
-        ; 调用通用处理函数，传入区域配置
-        ProcessPurchaseList(PurchaseItems, GeneralShopArea)
-        ; 刷新逻辑保持不变
-        while (ok := FindText(&X, &Y, NikkeX + 0.173 * NikkeW . " ", NikkeY + 0.423 * NikkeH . " ", NikkeX + 0.173 * NikkeW + 0.034 * NikkeW . " ", NikkeY + 0.423 * NikkeH + 0.050 * NikkeH . " ", 0.3 * PicTolerance, 0.3 * PicTolerance, FindText().PicLib("FREE"), , , , , , , TrueRatio, TrueRatio)) {
-            AddLog("尝试刷新商店")
-            FindText().Click(X - 100 * TrueRatio, Y + 30 * TrueRatio, "L")
-            Sleep 500
-            if (ok := FindText(&X := "wait", &Y := 1, NikkeX + 0.504 * NikkeW . " ", NikkeY + 0.593 * NikkeH . " ", NikkeX + 0.504 * NikkeW + 0.127 * NikkeW . " ", NikkeY + 0.593 * NikkeH + 0.066 * NikkeH . " ", 0.3 * PicTolerance, 0.3 * PicTolerance, FindText().PicLib("带圈白勾"), , , , , , , TrueRatio, TrueRatio)) {
-                FindText().Click(X, Y, "L")
-                Sleep 500
-                AddLog("刷新成功")
-            }
-        } else {
-            AddLog("没有免费刷新次数了，跳过刷新")
+    ; 先买一遍现有的免费商品
+    ProcessPurchaseList(PurchaseItems, GeneralShopArea)
+    ; 刷新逻辑：国际服认 FREE 字样，国服认橙色「免费」角标 + 计时器右侧的刷新图标
+    ; 每刷新一次就再买一遍，否则刷新出来的免费商品会整轮漏掉（国服原来刷完就收工）
+    RefreshTries := 0
+    while (RefreshTries < 3) {
+        if !ShopGeneralRefresh()
             break
-        }
-        Sleep 2000
+        RefreshTries++
+        Sleep 2500
+        AddLog("刷新完成，重新检查免费商品")
+        ProcessPurchaseList(PurchaseItems, GeneralShopArea)
     }
+}
+
+;tag 逐像素采样前，把截屏缓存真的刷新到要采样的那块区域
+;FindText 每次搜索只把「搜索矩形」BitBlt 进缓存，GetColor 读区域外的点只会拿到黑屏或上一次的旧像素，
+;所以采样前必须按采样区整块截一次屏，否则颜色占比全是错的
+RefreshShot(x1, y1, x2, y2) {
+    FindText().ScreenShot(Round(x1), Round(y1), Round(x2), Round(y2))
+}
+
+;tag 区域颜色统计：蓝 / 橙 / 白占比 + 平均亮度
+RegionStat(x1, y1, x2, y2) {
+    px1 := Round(NikkeX + x1 * NikkeW), py1 := Round(NikkeY + y1 * NikkeH)
+    px2 := Round(NikkeX + x2 * NikkeW), py2 := Round(NikkeY + y2 * NikkeH)
+    RefreshShot(px1, py1, px2, py2) ; 只截采样区，快且准
+    f := FindText()
+    n := 0, blue := 0, orange := 0, white := 0, hi := 0, sat := 0, sum := 0
+    y := py1
+    while (y <= py2) {
+        x := px1
+        while (x <= px2) {
+            c := f.GetColor(x, y)
+            r := (c >> 16) & 0xFF, g := (c >> 8) & 0xFF, b := c & 0xFF
+            n++
+            l := (r * 38 + g * 75 + b * 15) >> 7   ; 和 FindText 同一条亮度公式
+            sum += l
+            if (b > 170 && (b - r) > 90 && g > 110 && g < 230)
+                blue++
+            if (r > 220 && g > 120 && g < 200 && b < 100)
+                orange++
+            if (r > 215 && g > 215 && b > 215)
+                white++
+            if (l > 190)
+                hi++
+            mx := Max(r, g, b), mn := Min(r, g, b)
+            if ((mx - mn) > 55)
+                sat++
+            x += 2
+        }
+        y += 2
+    }
+    if !n
+        return { blue: 0, orange: 0, white: 0, hi: 0, sat: 0, bright: 0, n: 0 }
+    return { blue: blue / n, orange: orange / n, white: white / n, hi: hi / n, sat: sat / n, bright: Round(sum / n), n: n }
+}
+
+;tag 普通商店刷新一次（国际服认 FREE 字样，国服认橙色「免费」角标 + 计时条右侧的刷新图标）
+ShopGeneralRefresh() {
+    if (ok := FindText(&X, &Y, NikkeX + 0.173 * NikkeW . " ", NikkeY + 0.423 * NikkeH . " ", NikkeX + 0.173 * NikkeW + 0.034 * NikkeW . " ", NikkeY + 0.423 * NikkeH + 0.050 * NikkeH . " ", 0.3 * PicTolerance, 0.3 * PicTolerance, FindText().PicLib("FREE"), , 0, , , , , TrueRatio, TrueRatio)) {
+        AddLog("尝试刷新商店")
+        FindText().Click(X - 100 * TrueRatio, Y + 30 * TrueRatio, "L")
+        Sleep 500
+        if (ok := FindText(&X := "wait", &Y := 1, NikkeX + 0.504 * NikkeW . " ", NikkeY + 0.593 * NikkeH . " ", NikkeX + 0.504 * NikkeW + 0.127 * NikkeW . " ", NikkeY + 0.593 * NikkeH + 0.066 * NikkeH . " ", 0.3 * PicTolerance, 0.3 * PicTolerance, FindText().PicLib("带圈白勾"), , , , , , , TrueRatio, TrueRatio)) {
+            FindText().Click(X, Y, "L")
+            Sleep 500
+        }
+        AddLog("刷新成功")
+        return true
+    }
+    if (ok := FindText(&X, &Y, NikkeX + 0.155 * NikkeW . " ", NikkeY + 0.420 * NikkeH . " ", NikkeX + 0.155 * NikkeW + 0.060 * NikkeW . " ", NikkeY + 0.420 * NikkeH + 0.090 * NikkeH . " ", 0.1, 0.05, CNShopFreeTagTemplate(), 0, 0, , , , , TrueRatio / 0.5, TrueRatio / 0.5)) {
+        AddLog("尝试刷新商店（国服免费角标）")
+        if (FindText(&ix, &iy, NikkeX + 0.155 * NikkeW . " ", NikkeY + 0.440 * NikkeH . " ", NikkeX + 0.155 * NikkeW + 0.055 * NikkeW . " ", NikkeY + 0.440 * NikkeH + 0.075 * NikkeH . " ", 0.1, 0.05, CNShopRefreshIconTemplate(), 0, 0, , , , , TrueRatio / 0.5, TrueRatio / 0.5)) {
+            FindText().Click(ix, iy, "L")   ; 点计时器条右侧的刷新图标
+        }
+        else {
+            FindText().Click(X - 16 * TrueRatio, Y + 17 * TrueRatio, "L")
+        }
+        Sleep 1200
+        ; 国服点刷新一般会弹一个确认框：先认国际服的白勾，认不出来就用蓝色主按钮兜底
+        if (ok := FindText(&X := "wait", &Y := 1, NikkeX + 0.440 * NikkeW . " ", NikkeY + 0.560 * NikkeH . " ", NikkeX + 0.620 * NikkeW . " ", NikkeY + 0.760 * NikkeH . " ", 0.3 * PicTolerance, 0.3 * PicTolerance, FindText().PicLib("带圈白勾"), , , , , , , TrueRatio, TrueRatio)) {
+            Sleep 500
+            FindText().Click(X, Y, "L")
+            Sleep 800
+        }
+        else if FindBlueButton(Round(NikkeX + 0.380 * NikkeW), Round(NikkeY + 0.420 * NikkeH), Round(NikkeX + 0.660 * NikkeW), Round(NikkeY + 0.740 * NikkeH), &bx, &by) {
+            AddLog("点掉刷新确认框（国服蓝按钮）")
+            FindText().Click(bx, by, "L")
+            Sleep 800
+        }
+        else
+            AddLog("刷新后没看到确认框，可能已经直接刷新", "Olive")
+        AddLog("刷新成功")
+        return true
+    }
+    AddLog("没有免费刷新次数了，跳过刷新")
+    return false
+}
+
+;tag 判断是否已经在商店主页（国际服认左上角「百货商店」，国服普通商店认免费角标 / 计时条上的刷新图标）
+ShopMainVisible() {
+    if (ok := FindText(&X, &Y, NikkeX + 0.003 * NikkeW . " ", NikkeY + 0.007 * NikkeH . " ", NikkeX + 0.003 * NikkeW + 0.089 * NikkeW . " ", NikkeY + 0.007 * NikkeH + 0.054 * NikkeH . " ", 0.3 * PicTolerance, 0.3 * PicTolerance, FindText().PicLib("左上角的百货商店"), , 0, , , , , TrueRatio, TrueRatio))
+        return true
+    if (ok := FindText(&X, &Y, NikkeX + 0.155 * NikkeW . " ", NikkeY + 0.420 * NikkeH . " ", NikkeX + 0.155 * NikkeW + 0.060 * NikkeW . " ", NikkeY + 0.420 * NikkeH + 0.090 * NikkeH . " ", 0.1, 0.05, CNShopFreeTagTemplate(), 0, 0, , , , , TrueRatio / 0.5, TrueRatio / 0.5))
+        return true
+    if (ok := FindText(&X, &Y, NikkeX + 0.155 * NikkeW . " ", NikkeY + 0.440 * NikkeH . " ", NikkeX + 0.155 * NikkeW + 0.055 * NikkeW . " ", NikkeY + 0.440 * NikkeH + 0.075 * NikkeH . " ", 0.1, 0.05, CNShopRefreshIconTemplate(), 0, 0, , , , , TrueRatio / 0.5, TrueRatio / 0.5))
+        return true
+    return false
+}
+
+;tag 关掉购买/刷新的弹窗，回到商店主页
+ShopDismissPurchase() {
+    Sleep 800
+    if (ok := FindText(&X := "wait", &Y := 1, NikkeX + 0.440 * NikkeW . " ", NikkeY + 0.560 * NikkeH . " ", NikkeX + 0.620 * NikkeW . " ", NikkeY + 0.760 * NikkeH . " ", 0.3 * PicTolerance, 0.3 * PicTolerance, FindText().PicLib("带圈白勾"), , , , , , , TrueRatio, TrueRatio)) {
+        Sleep 500
+        FindText().Click(X, Y, "L")
+        Sleep 1000
+        return
+    }
+    if ShopMainVisible()
+        return
+    if FindBlueButton(Round(NikkeX + 0.400 * NikkeW), Round(NikkeY + 0.480 * NikkeH), Round(NikkeX + 0.640 * NikkeW), Round(NikkeY + 0.790 * NikkeH), &bx, &by) {
+        AddLog("点掉购买弹窗（国服蓝按钮）")
+        FindText().Click(bx, by, "L")
+        Sleep 1200
+        return
+    }
+    Confirm()
+}
+
+;tag 在给定区域里找一块蓝色主按钮（国服很多确认按钮是亮蓝色，国际服模板认不出来）
+;返回 true 时 cx/cy 是按钮中心（屏幕坐标）
+FindBlueButton(x1, y1, x2, y2, &cx, &cy, minWidth := 40, minSamples := 120) {
+    cx := 0, cy := 0
+    RefreshShot(x1, y1, x2, y2) ; 采样前按采样区整块截屏
+    f := FindText()
+    n := 0, bx1 := 999999, by1 := 999999, bx2 := -1, by2 := -1
+    y := y1
+    while (y <= y2) {
+        x := x1
+        while (x <= x2) {
+            c := f.GetColor(x, y)
+            r := (c >> 16) & 0xFF, g := (c >> 8) & 0xFF, b := c & 0xFF
+            if (b > 170 && (b - r) > 90 && g > 110 && g < 230) {
+                n++
+                if (x < bx1)
+                    bx1 := x
+                if (y < by1)
+                    by1 := y
+                if (x > bx2)
+                    bx2 := x
+                if (y > by2)
+                    by2 := y
+            }
+            x += 2
+        }
+        y += 2
+    }
+    if (n < minSamples || (bx2 - bx1) < minWidth * TrueRatio)
+        return false
+    ; 蓝色要成块（按钮是一整块蓝底），零星蓝色装饰（宝石图标之类）密度很低，直接排除
+    area := (((bx2 - bx1) / 2) + 1) * (((by2 - by1) / 2) + 1)
+    if (n / area < 0.25)
+        return false
+    cx := Round((bx1 + bx2) / 2)
+    cy := Round((by1 + by2) / 2)
+    return true
+}
+;tag 国服普通商店的橙色「免费」角标模板（从国服截图采集）
+CNShopFreeTagTemplate() {
+    return "|<>*163$36.DzzzzzDzz3s3Dzy3s1Dzw0s1Dzw0k0DzwakVDzw0s3jzz3s3jzz2M3jzwEE1jzxsltjzzzzzjzzzzzzzzlw0zzzlw0sDzts0U2zts03kTzk0DsTx00U"
+}
+;tag 国服普通商店计时器条上的刷新图标模板（从国服截图采集）
+CNShopRefreshIconTemplate() {
+    return "|<>*146$25.zzUzzz05zz3kTz7wDzbw7zXznznzvztzyzwzyTzzzDz3zbzkzXzsTXzw03zyk3zzzzzzzzzzzzzzzzzzzzzzzzzzzzzvzzzl"
 }
 ;tag 竞技场商店
 ShopArena() {
@@ -5447,6 +5664,81 @@ ShopRecycling() {
 }
 ;endregion 商店
 ;region 模拟室
+;tag 关闭模拟室的通关结算面板
+;国服适配：中间「模拟结束」能命中，但国服点完之后弹的确认框既不是「带圈白勾」也不是「圈中的感叹号」，
+;所以改成「点一次→重新校验」的循环，点不掉就换右上角红色「模拟结束」，并把每一步写进日志，
+;避免函数空转退出后把模态面板留给后面的导航函数去死等。
+SimClearPanelFound(&px, &py) {
+    return FindText(&px, &py, NikkeX + 0.364 * NikkeW . " ", NikkeY + 0.323 * NikkeH . " ", NikkeX + 0.364 * NikkeW + 0.272 * NikkeW . " ", NikkeY + 0.323 * NikkeH + 0.558 * NikkeH . " ", 0.2 * PicTolerance, 0.2 * PicTolerance, FindText().PicLib("模拟结束的图标"), , 0, , , , , TrueRatio, TrueRatio)
+}
+DismissSimulationResult() {
+    clicked := false
+    Loop 6 {
+        if SimClearPanelFound(&X, &Y) {
+            AddLog("点击模拟结束")
+            FindText().Click(X + 50 * TrueRatio, Y, "L")
+            clicked := true
+            Sleep 1500
+            if SimClearPanelFound(&X, &Y) {
+                if (ok := FindText(&X, &Y, NikkeX + 0.897 * NikkeW . " ", NikkeY + 0.063 * NikkeH . " ", NikkeX + 0.897 * NikkeW + 0.102 * NikkeW . " ", NikkeY + 0.063 * NikkeH + 0.060 * NikkeH . " ", 0.2 * PicTolerance, 0.2 * PicTolerance, FindText().PicLib("结束模拟的图标"), , 0, , , , , TrueRatio, TrueRatio)) {
+                    AddLog("点击右上角的模拟结束", "MAROON")
+                    FindText().Click(X, Y, "L")
+                    Sleep 1500
+                }
+            }
+            continue
+        }
+        if !clicked
+            return ; 面板本来就不在，直接走人
+        ; 面板已关掉，接着处理国服可能弹出的确认框：先找「确认」按钮，再找白色勾，左上角感叹号出现就当已结束
+        if (ok := FindText(&X, &Y, NikkeX + 0.412 * NikkeW . " ", NikkeY + 0.520 * NikkeH . " ", NikkeX + 0.412 * NikkeW + 0.176 * NikkeW . " ", NikkeY + 0.520 * NikkeH + 0.340 * NikkeH . " ", 0.3 * PicTolerance, 0.3 * PicTolerance, FindText().PicLib("确认"), , 0, , , , , TrueRatio, TrueRatio)) {
+            AddLog("点击模拟结束的确认")
+            FindText().Click(X, Y, "L")
+            Sleep 1200
+            continue
+        }
+        if (ok := FindText(&X, &Y, NikkeX + 0.412 * NikkeW . " ", NikkeY + 0.520 * NikkeH . " ", NikkeX + 0.412 * NikkeW + 0.176 * NikkeW . " ", NikkeY + 0.520 * NikkeH + 0.340 * NikkeH . " ", 0.3 * PicTolerance, 0.3 * PicTolerance, FindText().PicLib("带圈白勾"), , 0, , , , , TrueRatio * 1.25, TrueRatio * 1.25)) {
+            FindText().Click(X, Y, "L")
+            Sleep 1200
+            continue
+        }
+        if (ok := FindText(&X, &Y, NikkeX + 0.003 * NikkeW . " ", NikkeY + 0.007 * NikkeH . " ", NikkeX + 0.003 * NikkeW + 0.089 * NikkeW . " ", NikkeY + 0.007 * NikkeH + 0.054 * NikkeH . " ", 0.3 * PicTolerance, 0.3 * PicTolerance, FindText().PicLib("圈中的感叹号"), , 0, , , , , TrueRatio, TrueRatio))
+            break
+        Sleep 600
+    }
+    if SimClearPanelFound(&X, &Y)
+        AddLog("模拟室结算面板无法关闭，请截图反馈", "MAROON")
+    Sleep 1000
+}
+;tag 快速模拟的开关是不是「开」
+;国际服模板「模拟室·蓝色的开关」在国服匹配不到（国服开关是 #00A6F6 的纯蓝，关掉是灰色），
+;所以先试模板，再按蓝色像素占比兜底判断，避免像原来那样盲点 3 次把开关来回切。
+SimFastSwitchOn() {
+    x1 := NikkeX + 0.469 * NikkeW
+    y1 := NikkeY + 0.761 * NikkeH
+    x2 := x1 + 0.037 * NikkeW
+    y2 := y1 + 0.047 * NikkeH
+    ; 模板优先，顺带用这次搜索刷新截屏缓存供 GetColor 使用
+    if FindText(&sx, &sy, x1, y1, x2, y2, 0.3 * PicTolerance, 0.3 * PicTolerance, FindText().PicLib("模拟室·蓝色的开关"), , 0, , , , , TrueRatio, TrueRatio)
+        return true
+    f := FindText()
+    total := 0
+    hit := 0
+    y := y1
+    while (y < y2) {
+        x := x1
+        while (x < x2) {
+            c := f.GetColor(Round(x), Round(y))
+            total++
+            r := (c >> 16) & 0xFF, g := (c >> 8) & 0xFF, b := c & 0xFF
+            if (b > 180 && (b - r) > 110 && g > 90 && g < 215)
+                hit++
+            x += 2
+        }
+        y += 1
+    }
+    return total ? (hit / total > 0.12) : false
+}
 ;tag 模拟室
 SimulationNormal() {
     EnterToArk
@@ -5459,8 +5751,16 @@ SimulationNormal() {
     }
     while true {
         if (ok := FindText(&X, &Y, NikkeX + 0.897 * NikkeW . " ", NikkeY + 0.063 * NikkeH . " ", NikkeX + 0.897 * NikkeW + 0.102 * NikkeW . " ", NikkeY + 0.063 * NikkeH + 0.060 * NikkeH . " ", 0.2 * PicTolerance, 0.2 * PicTolerance, FindText().PicLib("结束模拟的图标"), , 0, , , , , TrueRatio, TrueRatio)) {
-            MsgBox("请手动结束模拟后重新运行该任务")
-            Pause
+            ; 国服：上一次模拟没被正常结束，自动点掉结算面板，不再卡在 MsgBox
+            AddLog("检测到模拟尚未结束，自动点击模拟结束", "MAROON")
+            FindText().Click(X, Y, "L")
+            Sleep 1500
+            if (ok := FindText(&X := "wait", &Y := 1, NikkeX + 0.518 * NikkeW . " ", NikkeY + 0.609 * NikkeH . " ", NikkeX + 0.518 * NikkeW + 0.022 * NikkeW . " ", NikkeY + 0.609 * NikkeH + 0.033 * NikkeH . " ", 0.3 * PicTolerance, 0.3 * PicTolerance, FindText().PicLib("带圈白勾"), , 0, , , , , TrueRatio, TrueRatio)) {
+                FindText().Click(X, Y, "L")
+                Sleep 1000
+            }
+            DismissSimulationResult
+            continue
         }
         if (ok := FindText(&X := "wait", &Y := 3, NikkeX + 0.442 * NikkeW . " ", NikkeY + 0.535 * NikkeH . " ", NikkeX + 0.442 * NikkeW + 0.118 * NikkeW . " ", NikkeY + 0.535 * NikkeH + 0.101 * NikkeH . " ", 0.3 * PicTolerance, 0.3 * PicTolerance, FindText().PicLib("开始模拟的开始"), , 0, , , , , TrueRatio, TrueRatio)) {
             AddLog("点击开始模拟")
@@ -5476,15 +5776,20 @@ SimulationNormal() {
         Confirm
         return
     }
-    Directly := false
-    while !(ok := FindText(&X, &Y, NikkeX + 0.469 * NikkeW . " ", NikkeY + 0.761 * NikkeH . " ", NikkeX + 0.469 * NikkeW + 0.037 * NikkeW . " ", NikkeY + 0.761 * NikkeH + 0.047 * NikkeH . " ", 0.3 * PicTolerance, 0.3 * PicTolerance, FindText().PicLib("模拟室·蓝色的开关"), , , , , , , TrueRatio, TrueRatio)) {
-        UserClick(1850, 1710, TrueRatio)
-        Sleep 500
-        Directly := true
-        if A_Index >= 3 {
-            Directly := false
-            break
+    Directly := false ; 国服：不再用这个开关"打没打开"的结论去跳过快速模拟流程
+    if !SimFastSwitchOn() {
+        ; 原来这里是盲点 3 次的开关切换，国服模板匹配不上时会来回把开关切掉；改成颜色判定，确认不是「开」才点，点完立刻复核
+        Loop 3 {
+            AddLog("尝试打开快速模拟的开关")
+            UserClick(1850, 1710, TrueRatio)
+            Sleep 800
+            if SimFastSwitchOn() {
+                AddLog("快速模拟开关已打开", "Olive")
+                break
+            }
         }
+        if !SimFastSwitchOn()
+            AddLog("没能确认快速模拟的开关状态，继续走快速模拟流程", "MAROON")
     }
     if !Directly {
         if (ok := FindText(&X := "wait", &Y := 3, NikkeX + 0.501 * NikkeW . " ", NikkeY + 0.830 * NikkeH . " ", NikkeX + 0.501 * NikkeW + 0.150 * NikkeW . " ", NikkeY + 0.830 * NikkeH + 0.070 * NikkeH . " ", 0.3 * PicTolerance, 0.3 * PicTolerance, FindText().PicLib("快速模拟的图标"), , 0, , , , , TrueRatio, TrueRatio)) {
@@ -5522,16 +5827,7 @@ SimulationNormal() {
         }
         BattleSettlement
     }
-    if (ok := FindText(&X := "wait", &Y := 5, NikkeX + 0.364 * NikkeW . " ", NikkeY + 0.323 * NikkeH . " ", NikkeX + 0.364 * NikkeW + 0.272 * NikkeW . " ", NikkeY + 0.323 * NikkeH + 0.558 * NikkeH . " ", 0.2 * PicTolerance, 0.2 * PicTolerance, FindText().PicLib("模拟结束的图标"), , , , , , , TrueRatio, TrueRatio)) {
-        AddLog("点击模拟结束")
-        Sleep 500
-        FindText().Click(X + 50 * TrueRatio, Y, "L")
-        Sleep 500
-        FindText().Click(X + 50 * TrueRatio, Y, "L")
-    }
-    while !(ok := FindText(&X := "wait", &Y := 1, NikkeX + 0.003 * NikkeW . " ", NikkeY + 0.007 * NikkeH . " ", NikkeX + 0.003 * NikkeW + 0.089 * NikkeW . " ", NikkeY + 0.007 * NikkeH + 0.054 * NikkeH . " ", 0.3 * PicTolerance, 0.3 * PicTolerance, FindText().PicLib("圈中的感叹号"), , 0, , , , , TrueRatio, TrueRatio)) {
-        Confirm
-    }
+    DismissSimulationResult
 }
 ;tag 模拟室超频
 SimulationOverClock(mode := "") {
@@ -5610,13 +5906,7 @@ SimulationOverClock(mode := "") {
             ExitApp
         }
     }
-    if (ok := FindText(&X := "wait", &Y := 5, NikkeX + 0.364 * NikkeW . " ", NikkeY + 0.323 * NikkeH . " ", NikkeX + 0.364 * NikkeW + 0.272 * NikkeW . " ", NikkeY + 0.323 * NikkeH + 0.558 * NikkeH . " ", 0.2 * PicTolerance, 0.2 * PicTolerance, FindText().PicLib("模拟结束的图标"), , , , , , , TrueRatio, TrueRatio)) {
-        AddLog("点击模拟结束")
-        Sleep 500
-        FindText().Click(X + 50 * TrueRatio, Y, "L")
-        Sleep 500
-        Confirm
-    }
+    DismissSimulationResult
     if (ok := FindText(&X := "wait", &Y := 3, NikkeX + 0.367 * NikkeW . " ", NikkeY + 0.755 * NikkeH . " ", NikkeX + 0.367 * NikkeW + 0.267 * NikkeW . " ", NikkeY + 0.755 * NikkeH + 0.093 * NikkeH . " ", 0.2 * PicTolerance, 0.2 * PicTolerance, FindText().PicLib("不选择的图标"), , , , , , , TrueRatio, TrueRatio)) {
         FindText().Click(X, Y, "L")
         Sleep 1000
@@ -5832,6 +6122,76 @@ ArenaChampion() {
 }
 ;endregion 竞技场
 ;region 无限之塔
+;tag 获取当前“开启”的企业塔卡片位置（国际服模板优先，其次国服模板，最后按标签行蓝色条纹判断）
+GetOpenTowerCards() {
+    list := []
+    x1 := NikkeX + 0.345 * NikkeW . " "
+    y1 := NikkeY + 0.495 * NikkeH . " "
+    x2 := NikkeX + 0.650 * NikkeW . " "
+    y2 := NikkeY + 0.605 * NikkeH . " "
+    ;国际服/港澳台服模板
+    if (ok := FindText(&X, &Y, x1, y1, x2, y2, 0.3 * PicTolerance, 0.3 * PicTolerance, FindText().PicLib("无限之塔·OPEN"), , 1, , , , , TrueRatio, TrueRatio)) {
+        for m in ok
+            list.Push({ x: m.x, y: m.y })
+        return list
+    }
+    ;国服模板（从国服截图采集，采集基准为1080p，缩放系数0.5）；卡片带透视，各卡字号不同，所以要按多个缩放比例各扫一遍
+    baseZoom := TrueRatio / 0.5
+    for zf in [1.0, 1.15, 1.3, 1.45, 1.6, 1.75] {
+        if (ok := FindText(&X, &Y, x1, y1, x2, y2, 0.1, 0.05, CNTowerOpenTemplate(), 0, 1, 0, 0, 0, 0, baseZoom * zf, baseZoom * zf)) {
+            for m in ok {
+                dup := false
+                for it in list {
+                    if (Abs(it.x - m.x) < 30 * TrueRatio)
+                        dup := true
+                }
+                if !dup
+                    list.Push({ x: m.x, y: m.y })
+            }
+        }
+    }
+    if (list.Length > 0)
+        return list
+    ;颜色兜底：“开启”标签行有一整排蓝色条纹，“关闭”是灰白条纹，按蓝色占比逐张判定（不受字号影响）
+    Loop 4 {
+        ratio := TowerCardBlueRatio(A_Index)
+        if (ratio > 0.08) {
+            AddLog("第" A_Index "座企业塔标签行蓝色占比" Round(ratio * 100) "%，判定开放", "Gray")
+            list.Push({ x: NikkeX + 0.356 * NikkeW + 270 * TrueRatio * (A_Index - 1) + 132 * TrueRatio, y: NikkeY + 0.538 * NikkeH })
+        }
+    }
+    return list
+}
+;tag 统计某张企业塔卡片「开启/关闭」标签行的蓝色像素占比（0~1）
+TowerCardBlueRatio(i) {
+    cardX0 := NikkeX + 0.356 * NikkeW + 270 * TrueRatio * (i - 1)
+    cardW := 264 * TrueRatio
+    bandY1 := NikkeY + 0.521 * NikkeH
+    bandY2 := bandY1 + 0.034 * NikkeH
+    RefreshShot(cardX0 + 0.06 * cardW, bandY1, cardX0 + 0.94 * cardW, bandY2) ; 采样前按采样区整块截屏
+    f := FindText()
+    total := 0
+    hit := 0
+    y := bandY1
+    while (y < bandY2) {
+        x := cardX0 + 0.06 * cardW
+        while (x < cardX0 + 0.94 * cardW) {
+            c := f.GetColor(Round(x), Round(y))
+            total++
+            r := (c >> 16) & 0xFF
+            b := c & 0xFF
+            if (b - r > 60 && b > 140)
+                hit++
+            x += 2
+        }
+        y += 1
+    }
+    return total ? hit / total : 0
+}
+;tag 国服“开启”标签模板（从国服截图采集）
+CNTowerOpenTemplate() {
+    return "|<>*176$47.zzzzzDzzy00DyDzzw00S00zzzD7w01zzySDtzXzzwwTnzbzztszU0Dzw00D00Tzs00STzzzy77w01zzwSDk03zzswTUTXzznsz9z7zz7lyFyDzwTXsU0Tzlz7n00zzzzTzTvzk"
+}
 ;tag 企业塔
 TowerCompany() {
     EnterToArk
@@ -5849,30 +6209,32 @@ TowerCompany() {
         return
     }
     TowerArray := []
-    loop 4 {
-        if (ok := FindText(&X, &Y, NikkeX + 0.356 * NikkeW + 270 * TrueRatio * (A_Index - 1) . " ", NikkeY + 0.521 * NikkeH . " ", NikkeX + 0.356 * NikkeW + 0.070 * NikkeW + 270 * TrueRatio * (A_Index - 1) . " ", NikkeY + 0.521 * NikkeH + 0.034 * NikkeH . " ", 0.3 * PicTolerance, 0.3 * PicTolerance, FindText().PicLib("无限之塔·OPEN"), , , , , , , TrueRatio, TrueRatio)) {
-            Status := "开放中"
-        }
-        else Status := "未开放"
-        switch A_Index {
-            case 1: Tower := "极乐净土之塔"
-            case 2: Tower := "米西利斯之塔"
-            case 3: Tower := "泰特拉之塔"
-            case 4: Tower := "朝圣者/超标准之塔"
+    TowerOpenList := GetOpenTowerCards()
+    cardX0 := NikkeX + 0.356 * NikkeW
+    cardStep := 270 * TrueRatio
+    towerNames := ["极乐净土之塔", "米西利斯之塔", "泰特拉之塔", "朝圣者/超标准之塔"]
+    for i, TowerName in towerNames {
+        Status := "未开放"
+        for item in TowerOpenList {
+            if (Floor((item.x - cardX0) / cardStep) + 1 = i) {
+                Status := "开放中"
+                break
+            }
         }
         if Status = "开放中" {
-            TowerArray.Push(Tower)
-            AddLog(Tower "-" Status, "Green")
+            TowerArray.Push(TowerName)
+            AddLog(TowerName "-" Status, "Green")
         }
-        else AddLog(Tower "-" Status, "Gray")
+        else AddLog(TowerName "-" Status, "Gray")
     }
-    if (ok := FindText(&X := "wait", &Y := 1, NikkeX + 0.357 * NikkeW . " ", NikkeY + 0.518 * NikkeH . " ", NikkeX + 0.357 * NikkeW + 0.287 * NikkeW . " ", NikkeY + 0.518 * NikkeH + 0.060 * NikkeH . " ", 0.3 * PicTolerance, 0.3 * PicTolerance, FindText().PicLib("无限之塔·OPEN"), , , , , , 5, TrueRatio, TrueRatio)) {
-        count := ok.Length
+    if (TowerOpenList.Length > 0) {
+        count := TowerOpenList.Length
         Sleep 1000
-        FindText().Click(X, Y + 100 * TrueRatio, "L")
+        FindText().Click(TowerOpenList[1].x, TowerOpenList[1].y + 100 * TrueRatio, "L")
         Sleep 1000
         ; 添加变量跟踪当前关卡
         TowerIndex := 1
+        SpinGuard := 0
         ; 修改循环条件
         while (TowerIndex <= count) {
             if (ok := FindText(&X := "wait", &Y := 3, NikkeX + 0.426 * NikkeW . " ", NikkeY + 0.405 * NikkeH . " ", NikkeX + 0.426 * NikkeW + 0.025 * NikkeW . " ", NikkeY + 0.405 * NikkeH + 0.024 * NikkeH . " ", 0.3 * PicTolerance, 0.3 * PicTolerance, FindText().PicLib("STAGE"), , , , , , , TrueRatio, TrueRatio)) {
@@ -5884,9 +6246,30 @@ TowerCompany() {
                 BattleSettlement
                 ; 成功完成当前关卡后，才增加索引
                 TowerIndex++
+                SpinGuard := 0
+            }
+            else if (ok := FindText(&X := "wait", &Y := 2, NikkeX + 0.499 * NikkeW . " ", NikkeY + 0.786 * NikkeH . " ", NikkeX + 0.499 * NikkeW + 0.155 * NikkeW . " ", NikkeY + 0.786 * NikkeH + 0.191 * NikkeH . " ", 0.3 * PicTolerance, 0.3 * PicTolerance, FindText().PicLib("进入战斗的进"), , , , , , , TrueRatio, TrueRatio)) {
+                ; 国服的关卡详情页没有 STAGE 字样，标题是「269 层」，用「进入战斗」按钮的「进」字判定
+                Tower := TowerArray[TowerIndex]
+                AddLog("已进入" Tower "的内部（国服详情页）")
+                Sleep 1000
+                EnterToBattle
+                BattleSettlement
+                TowerIndex++
+                SpinGuard := 0
+            }
+            else if (ok := FindText(&X := "wait", &Y := 1, NikkeX + 0.519 * NikkeW . " ", NikkeY + 0.831 * NikkeH . " ", NikkeX + 0.519 * NikkeW + 0.134 * NikkeW . " ", NikkeY + 0.831 * NikkeH + 0.143 * NikkeH . " ", 0.3 * PicTolerance, 0.3 * PicTolerance, FindText().PicLib("灰色的进"), , , , , , , TrueRatio, TrueRatio)) {
+                AddLog("该塔剩余次数已用完，跳过", "Olive")
+                TowerIndex++
+                SpinGuard := 0
             }
             else {
                 RefuseSale
+                SpinGuard++
+                if SpinGuard >= 5 {
+                    AddLog("企业塔关卡页面识别失败，跳过剩余塔", "MAROON")
+                    break
+                }
             }
             ; 检查是否已完成所有关卡
             if (TowerIndex > count) {
@@ -6093,33 +6476,68 @@ InterceptionAnomaly() {
         }
     }
     Sleep 1000
+    quickFail := 0
     while True {
-        if g_settings["InterceptionReminder"] {
-            if (ok := FindText(&X := "wait", &Y := 1, NikkeX + 0.506 * NikkeW . " ", NikkeY + 0.826 * NikkeH . " ", NikkeX + 0.506 * NikkeW + 0.145 * NikkeW . " ", NikkeY + 0.826 * NikkeH + 0.065 * NikkeH . " ", 0.3 * PicTolerance, 0.3 * PicTolerance, FindText().PicLib("灰色的快速战斗图标"), , , , , , , TrueRatio, TrueRatio)) {
-                AddLog("拦截战次数已重置，跳过任务")
-                finalMessageText := finalMessageText . "拦截战次数已重置`n"
-                BackToHall
-                return
+        ;国服判据一：本周还没打过的时候「每周快速战斗」是灰的（和国际服同款，直接复用国际服那张灰色模板）。
+        ;国服判据二：打过以后右上「达成阶段」徽标里才会出现数字（1-8），没有数字就是没打过。
+        quickLocked := FindText(&X, &Y, NikkeX + 0.506 * NikkeW, NikkeY + 0.826 * NikkeH, NikkeX + 0.506 * NikkeW + 0.145 * NikkeW, NikkeY + 0.826 * NikkeH + 0.065 * NikkeH, 0.3 * PicTolerance, 0.3 * PicTolerance, FindText().PicLib("灰色的快速战斗图标"), , 0, , , , , TrueRatio, TrueRatio)
+        if quickLocked
+            AddLog("每周快速战斗是灰的，本周还没打过")
+        stageDone := quickLocked ? false : WeeklyStageDone()
+        okEnter := FindText(&X2, &Y2, NikkeX + 0.503 * NikkeW, NikkeY + 0.879 * NikkeH, NikkeX + 0.503 * NikkeW + 0.150 * NikkeW, NikkeY + 0.879 * NikkeH + 0.102 * NikkeH, 0.3 * PicTolerance, 0.3 * PicTolerance, FindText().PicLib("拦截战·进入战斗的进"), , 0, , , , , TrueRatio, TrueRatio)
+        if stageDone && quickFail < 2 {
+            AddLog("本周达成阶段已有记录，尝试快速战斗")
+            okQuick := FindText(&X, &Y, NikkeX + 0.506 * NikkeW, NikkeY + 0.826 * NikkeH, NikkeX + 0.506 * NikkeW + 0.145 * NikkeW, NikkeY + 0.826 * NikkeH + 0.065 * NikkeH, 0.3 * PicTolerance, 0.3 * PicTolerance, FindText().PicLib("拦截战·快速战斗的图标"), , 0, , , , , TrueRatio, TrueRatio)
+            Loop 2 {
+                if okQuick
+                    FindText().Click(X + 50 * TrueRatio, Y, "L")
+                else
+                    UserClick(2220, 1904, TrueRatio)
+                Sleep 800
+            }
+            Sleep 2500
+            if StillOnInterceptPanel() {
+                quickFail++
+                AddLog("快速战斗点了没反应，改为普通战斗", "Olive")
+            }
+            else {
+                modes := []
+                if g_settings["InterceptionRedCircle"]
+                    modes.Push("RedCircle")
+                if g_settings["InterceptionScreenshot"]
+                    modes.Push("Screenshot")
+                if g_settings["InterceptionExit7"] and g_numeric_settings["UserLevel"] >= 3
+                    modes.Push("Exit7")
+                global BattleActive := 1
+                BattleSettlement(modes*)
+                Sleep 2000
+                continue
             }
         }
-        if (ok := FindText(&X := "wait", &Y := 1, NikkeX + 0.506 * NikkeW . " ", NikkeY + 0.826 * NikkeH . " ", NikkeX + 0.506 * NikkeW + 0.145 * NikkeW . " ", NikkeY + 0.826 * NikkeH + 0.065 * NikkeH . " ", 0.3 * PicTolerance, 0.3 * PicTolerance, FindText().PicLib("拦截战·快速战斗的图标"), , , , , , , TrueRatio, TrueRatio)) {
-            AddLog("已激活快速战斗")
-            Sleep 500
-            FindText().Click(X + 50 * TrueRatio, Y, "L")
-            Sleep 500
-            FindText().Click(X + 50 * TrueRatio, Y, "L")
-            Sleep 500
+        else if !stageDone {
+            AddLog("本周还没达成阶段（达成阶段没有数字），先打一场普通战斗", "Olive")
         }
-        else if (ok := FindText(&X := "wait", &Y := 1, NikkeX + 0.503 * NikkeW . " ", NikkeY + 0.879 * NikkeH . " ", NikkeX + 0.503 * NikkeW + 0.150 * NikkeW . " ", NikkeY + 0.879 * NikkeH + 0.102 * NikkeH . " ", 0.3 * PicTolerance, 0.3 * PicTolerance, FindText().PicLib("拦截战·进入战斗的进"), , , , , , , TrueRatio, TrueRatio)) {
-            AddLog("未激活快速战斗，尝试普通战斗")
-            FindText().Click(X, Y, "L")
-            Sleep 1000
-            Skipping
+        if okEnter {
+            AddLog("尝试普通战斗")
+            FindText().Click(X2, Y2, "L")
+        }
+        else if EnterBattleRedRatio() {
+            AddLog("没认出进入战斗的文字，按红色按钮中心点一次")
+            UserClick(2216, 2050, TrueRatio)
         }
         else {
             AddLog("拦截次数已耗尽", "MAROON")
             break
         }
+        Sleep 1500
+        if StillOnInterceptPanel() {
+            AddLog("点了进入战斗还是停在准备界面，可能弹了提示框，按一次 ESC 收尾结束本次拦截任务", "MAROON")
+            Send "{Esc}"
+            Sleep 1000
+            break
+        }
+        quickFail := 0
+        Skipping
         modes := []
         if g_settings["InterceptionRedCircle"]
             modes.Push("RedCircle")
@@ -6131,6 +6549,63 @@ InterceptionAnomaly() {
         BattleSettlement(modes*)
         Sleep 2000
     }
+}
+;tag 本周「达成阶段」有没有数字（有数字=本周已打过，快速战斗可用）
+WeeklyStageDone() {
+    x1 := Round(NikkeX + 0.5917 * NikkeW)
+    y1 := Round(NikkeY + 0.8657 * NikkeH)
+    x2 := Round(NikkeX + 0.6036 * NikkeW)
+    y2 := Round(NikkeY + 0.8870 * NikkeH)
+    ; 先随便找一次刷新截屏（GetColor 读的是上一次截屏）
+    FindText(&d1, &d2, x1, y1, x2, y2, 0.1, 0.1, FindText().PicLib("拦截战·进入战斗的进"), 1, 0, , , , , TrueRatio, TrueRatio)
+    f := FindText()
+    total := 0, white := 0
+    y := y1
+    while (y < y2) {
+        x := x1
+        while (x < x2) {
+            c := f.GetColor(x, y)
+            r := (c >> 16) & 0xFF, g := (c >> 8) & 0xFF, b := c & 0xFF
+            total++
+            if (r > 190 && g > 190 && b > 190)
+                white++
+            x++
+        }
+        y++
+    }
+    return total && (white / total > 0.05)
+}
+;tag 进入战斗按钮是不是红色（模板认不出时的兜底）
+EnterBattleRedRatio() {
+    x1 := Round(NikkeX + 0.503 * NikkeW)
+    y1 := Round(NikkeY + 0.891 * NikkeH)
+    x2 := Round(NikkeX + 0.650 * NikkeW)
+    y2 := Round(NikkeY + 0.951 * NikkeH)
+    FindText(&d1, &d2, x1, y1, x2, y2, 0.1, 0.1, FindText().PicLib("拦截战·进入战斗的进"), 1, 0, , , , , TrueRatio, TrueRatio)
+    f := FindText()
+    total := 0, red := 0
+    y := y1
+    while (y < y2) {
+        x := x1
+        while (x < x2) {
+            c := f.GetColor(x, y)
+            r := (c >> 16) & 0xFF, g := (c >> 8) & 0xFF, b := c & 0xFF
+            total++
+            if (r > 175 && g < 75 && b < 75)
+                red++
+            x += 2
+        }
+        y += 2
+    }
+    return total && (red / total > 0.5)
+}
+;tag 异常拦截的准备界面还在不在
+StillOnInterceptPanel() {
+    if (ok := FindText(&X, &Y, NikkeX + 0.506 * NikkeW, NikkeY + 0.826 * NikkeH, NikkeX + 0.506 * NikkeW + 0.145 * NikkeW, NikkeY + 0.826 * NikkeH + 0.065 * NikkeH, 0.3 * PicTolerance, 0.3 * PicTolerance, FindText().PicLib("拦截战·快速战斗的图标"), , 0, , , , , TrueRatio, TrueRatio))
+        return true
+    if (ok := FindText(&X, &Y, NikkeX + 0.503 * NikkeW, NikkeY + 0.879 * NikkeH, NikkeX + 0.503 * NikkeW + 0.150 * NikkeW, NikkeY + 0.879 * NikkeH + 0.102 * NikkeH, 0.3 * PicTolerance, 0.3 * PicTolerance, FindText().PicLib("拦截战·进入战斗的进"), , 0, , , , , TrueRatio, TrueRatio))
+        return true
+    return false
 }
 ;endregion 拦截战
 ;region 前哨基地
@@ -6217,116 +6692,277 @@ AwardOutpostDispatch() {
 ;endregion 前哨基地
 ;region 咨询
 ;tag 好感度咨询
+;国服适配：国际服那一套「逐个妮姬点咨询→选回复→跳过对话」在国服认不出来
+;（咨询的咨、快速咨询的图标、带圈白勾 在国服咨询页实测都不匹配），改成按国服实际交互走两条路：
+;  ① 咨询列表页右下角「批量咨询」是蓝色 → 今天还有次数，点它，游戏会一次性把咨询跑完，然后回主页；
+;  ② 不是蓝色 → 点左上角第一个角色进详情，看「快速咨询 / 咨询」按钮还能不能点（灰的就是没次数），
+;     还有次数就从第一个角色开始，按从左往右、从上往下的顺序用右箭头逐个咨询，直到次数用完，再回主页。
 AwardAdvise() {
-    while !(ok := FindText(&X := "wait", &Y := 1, NikkeX + 0.003 * NikkeW . " ", NikkeY + 0.009 * NikkeH . " ", NikkeX + 0.003 * NikkeW + 0.069 * NikkeW . " ", NikkeY + 0.009 * NikkeH + 0.050 * NikkeH . " ", 0.3 * PicTolerance, 0.3 * PicTolerance, FindText().PicLib("圈中的感叹号"), , , , , , , TrueRatio, TrueRatio)) {
-        UserClick(1493, 1949, TrueRatio)
-        AddLog("点击妮姬的图标，进入好感度咨询")
-    }
-    Sleep 2000
-    while (ok := FindText(&X := "wait", &Y := 1, NikkeX + 0.818 * NikkeW . " ", NikkeY + 0.089 * NikkeH . " ", NikkeX + 0.818 * NikkeW + 0.089 * NikkeW . " ", NikkeY + 0.089 * NikkeH + 0.056 * NikkeH . " ", 0.3 * PicTolerance, 0.3 * PicTolerance, FindText().PicLib("咨询的图标"), , , , , , , TrueRatio, TrueRatio)) {
-        FindText().Click(X, Y, "L")
-        Sleep 1000
-        if A_Index > 10 {
-            MsgBox("未找到好感度咨询图标")
-            Pause
+    AddLog("开始任务：妮姬咨询（国服）", "Fuchsia")
+    entered := false
+    tries := 0
+    Loop 8 {
+        exists := false, enabled := false
+        AdviseBatchStat(&exists, &enabled)
+        if exists {
+            entered := true
+            break
         }
+        if (ok := FindText(&X, &Y, NikkeX + 0.760 * NikkeW . " ", NikkeY + 0.075 * NikkeH . " ", NikkeX + 0.760 * NikkeW + 0.235 * NikkeW . " ", NikkeY + 0.075 * NikkeH + 0.105 * NikkeH . " ", 0.3 * PicTolerance, 0.3 * PicTolerance, FindText().PicLib("咨询的图标"), , 0, , , , , TrueRatio, TrueRatio)) {
+            AddLog("点击咨询入口")
+            FindText().Click(X, Y, "L")
+            Sleep 2500
+            continue
+        }
+        tries++
+        if (tries >= 3) {
+            ; 模板认不出来时，按固定坐标点妮姬页右上角的「咨询」按钮（国服实测 1745..1860 × 100..155）
+            AddLog("模板没认出咨询按钮，按固定坐标点右上角的「咨询」")
+            UserClick(3600, 256, TrueRatio) ; 客户区约 (1800,128)
+            Sleep 2500
+            continue
+        }
+        AddLog("点击底部的妮姬图标")
+        UserClick(1490, 2050, TrueRatio)
+        Sleep 2500
+    }
+    if !entered {
+        AddLog("没能进入好感度咨询界面，跳过该任务", "MAROON")
+        return
     }
     AddLog("已进入好感度咨询界面")
-    ; 花絮鉴赏会
-    if g_settings["AwardAppreciation"] {
+    if g_settings["AwardAdviseAward"]
+        AddLog("国服暂时做不了「自动领取咨询奖励」（花絮页模板还不匹配），这次跳过", "Olive")
+    ; 花絮鉴赏会（开关打开时先做）
+    if g_settings["AwardAppreciation"]
         AwardAppreciation
+    exists := false, enabled := false
+    AdviseBatchStat(&exists, &enabled)
+    if enabled {
+        AddLog("「批量咨询」是蓝色的，走批量咨询")
+        AdviseBatchRun()
+        BackToHall
+        return
     }
-    while (ok := FindText(&X := "wait", &Y := 2, NikkeX + 0.118 * NikkeW . " ", NikkeY + 0.356 * NikkeH . " ", NikkeX + 0.118 * NikkeW + 0.021 * NikkeW . " ", NikkeY + 0.356 * NikkeH + 0.022 * NikkeH . " ", 0.3 * PicTolerance, 0.3 * PicTolerance, FindText().PicLib("》》》"), , , , , , , TrueRatio, TrueRatio)) {
-        FindText().Click(X + 50 * TrueRatio, Y, "L")
-        AddLog("点击左上角的妮姬")
-        Sleep 500
-    }
-    AddLog("开始任务：妮姬咨询", "Fuchsia")
-    while true {
-        if (ok := FindText(&X, &Y, NikkeX + 0.572 * NikkeW . " ", NikkeY + 0.835 * NikkeH . " ", NikkeX + 0.572 * NikkeW + 0.008 * NikkeW . " ", NikkeY + 0.835 * NikkeH + 0.013 * NikkeH . " ", 0.25 * PicTolerance, 0.25 * PicTolerance, FindText().PicLib("灰色的咨询次数0"), , , , , , , TrueRatio, TrueRatio)) {
-            AddLog("咨询次数已耗尽", "MAROON")
-            break
-        }
-        if A_Index > 20 {
-            AddLog("妮姬咨询任务已超过20次，结束任务", "MAROON")
-            break
-        }
-        if (ok := FindText(&X, &Y, NikkeX + 0.637 * NikkeW . " ", NikkeY + 0.672 * NikkeH . " ", NikkeX + 0.637 * NikkeW + 0.004 * NikkeW . " ", NikkeY + 0.672 * NikkeH + 0.013 * NikkeH . " ", 0.3 * PicTolerance, 0.3 * PicTolerance, FindText().PicLib("红色的20进度"), , , , , , , TrueRatio, TrueRatio)) {
-            AddLog("图鉴已满")
-            ; 检测是否好感度已满
-            isMax := FindText(&X_Max, &Y_Max, NikkeX + 0.541 * NikkeW . " ", NikkeY + 0.637 * NikkeH . " ", NikkeX + 0.541 * NikkeW + 0.030 * NikkeW . " ", NikkeY + 0.637 * NikkeH + 0.028 * NikkeH . " ", 0.3 * PicTolerance, 0.3 * PicTolerance, FindText().PicLib("咨询·MAX"), , , , , , , TrueRatio, TrueRatio)
-            ; 如果好感度已满且未开启强制执行，则跳过
-            if (isMax and !g_settings["AwardAdviseForce"]) {
-                AddLog("好感度已满，跳过")
-                ; 检测并取消收藏：图鉴已满且好感度已满的情况
-                if (ok := FindText(&X, &Y, NikkeX + 0.361 * NikkeW . " ", NikkeY + 0.512 * NikkeH . " ", NikkeX + 0.361 * NikkeW + 0.026 * NikkeW . " ", NikkeY + 0.512 * NikkeH + 0.046 * NikkeH . " ", 0.2 * PicTolerance, 0.2 * PicTolerance, FindText().PicLib("红色的收藏图标"), , , , , , , TrueRatio, TrueRatio)) {
-                    FindText().Click(X, Y, "L")
-                    AddLog("取消收藏该妮姬 (图鉴已满且好感度已满)")
-                }
-            }
-            ; 如果 (好感度未满) 或者 (好感度已满但开启了强制执行)，则尝试快速咨询
-            else if (ok := FindText(&X, &Y, NikkeX + 0.501 * NikkeW . " ", NikkeY + 0.726 * NikkeH . " ", NikkeX + 0.501 * NikkeW + 0.130 * NikkeW . " ", NikkeY + 0.726 * NikkeH + 0.059 * NikkeH . " ", 0.2 * PicTolerance, 0.2 * PicTolerance, FindText().PicLib("快速咨询的图标"), , , , , , , TrueRatio, TrueRatio)) {
-                AddLog(isMax ? "强制执行：尝试快速咨询" : "尝试快速咨询")
-                FindText().Click(X, Y, "L")
-                Sleep 1000
-                if (ok := FindText(&X, &Y, NikkeX + 0.506 * NikkeW . " ", NikkeY + 0.600 * NikkeH . " ", NikkeX + 0.506 * NikkeW + 0.125 * NikkeW . " ", NikkeY + 0.600 * NikkeH + 0.054 * NikkeH . " ", 0.3 * PicTolerance, 0.3 * PicTolerance, FindText().PicLib("带圈白勾"), , , , , , , TrueRatio, TrueRatio)) {
-                    FindText().Click(X, Y, "L")
-                    AddLog("已咨询" A_Index "次", "GREEN")
-                    Sleep 1000
-                }
-                ; 检测并取消收藏：执行强制咨询的情况
-                if (g_settings["AwardAdviseForce"] and isMax) {
-                    if (ok := FindText(&X, &Y, NikkeX + 0.361 * NikkeW . " ", NikkeY + 0.512 * NikkeH . " ", NikkeX + 0.361 * NikkeW + 0.026 * NikkeW . " ", NikkeY + 0.512 * NikkeH + 0.046 * NikkeH . " ", 0.2 * PicTolerance, 0.2 * PicTolerance, FindText().PicLib("红色的收藏图标"), , , , , , , TrueRatio, TrueRatio)) {
-                        FindText().Click(X, Y, "L")
-                        AddLog("取消收藏该妮姬 (执行强制咨询)")
-                    }
-                }
-            }
-            else AddLog("该妮姬已咨询")
-        } else {
-            AddLog("图鉴未满")
-            if (ok := FindText(&X, &Y, NikkeX + 0.502 * NikkeW . " ", NikkeY + 0.780 * NikkeH . " ", NikkeX + 0.502 * NikkeW + 0.131 * NikkeW . " ", NikkeY + 0.780 * NikkeH + 0.088 * NikkeH . " ", 0.2 * PicTolerance, 0.2 * PicTolerance, FindText().PicLib("咨询的咨"), , , , , , , TrueRatio, TrueRatio)) {
-                AddLog("尝试普通咨询")
-                FindText().Click(X + 50 * TrueRatio, Y, "L")
-                Sleep 1000
-                if (ok := FindText(&X, &Y, NikkeX + 0.506 * NikkeW . " ", NikkeY + 0.600 * NikkeH . " ", NikkeX + 0.506 * NikkeW + 0.125 * NikkeW . " ", NikkeY + 0.600 * NikkeH + 0.054 * NikkeH . " ", 0.3 * PicTolerance, 0.3 * PicTolerance, FindText().PicLib("带圈白勾"), , , , , , , TrueRatio, TrueRatio)) {
-                    FindText().Click(X, Y, "L")
-                    Sleep 1000
-                    AddLog("已咨询" A_Index "次")
-                }
-                Sleep 1000
-                while true {
-                    AddLog("随机点击对话框")
-                    UserClick(1894, 1440, TrueRatio) ;点击1号位默认位置
-                    Sleep 200
-                    UserClick(1903, 1615, TrueRatio) ;点击2号位默认位置
-                    Sleep 200
-                    Send "{]}" ;尝试跳过
-                    Sleep 200
-                    if A_Index > 5 and (ok := FindText(&X, &Y, NikkeX + 0.003 * NikkeW . " ", NikkeY + 0.009 * NikkeH . " ", NikkeX + 0.003 * NikkeW + 0.069 * NikkeW . " ", NikkeY + 0.009 * NikkeH + 0.050 * NikkeH . " ", 0.3 * PicTolerance, 0.3 * PicTolerance, FindText().PicLib("圈中的感叹号"), , , , , , , TrueRatio, TrueRatio)) {
-                        break
-                    }
-                }
-                Sleep 1000
-            }
-            else {
-                AddLog("该妮姬已咨询")
-            }
-        }
-        while !(ok := FindText(&X, &Y, NikkeX + 0.003 * NikkeW . " ", NikkeY + 0.009 * NikkeH . " ", NikkeX + 0.003 * NikkeW + 0.069 * NikkeW . " ", NikkeY + 0.009 * NikkeH + 0.050 * NikkeH . " ", 0.3 * PicTolerance, 0.3 * PicTolerance, FindText().PicLib("圈中的感叹号"), , , , , , , TrueRatio, TrueRatio)) {
-            AddLog("确认咨询结算")
-            Confirm
-        }
-        if g_settings["AwardAdviseAward"] and g_numeric_settings["UserLevel"] >= 3 {
-            AwardAdviseAward
-        }
-        if (ok := FindText(&X, &Y, NikkeX + 0.970 * NikkeW . " ", NikkeY + 0.403 * NikkeH . " ", NikkeX + 0.970 * NikkeW + 0.024 * NikkeW . " ", NikkeY + 0.403 * NikkeH + 0.067 * NikkeH . " ", 0.2 * PicTolerance, 0.2 * PicTolerance, FindText().PicLib("咨询·向右的图标"), , , , , , , TrueRatio, TrueRatio)) {
-            AddLog("下一个妮姬")
-            FindText().Click(X - 30 * TrueRatio, Y, "L")
-            Sleep 1000
-        }
-    }
+    AddLog("「批量咨询」不是蓝色，改走逐个咨询", "Olive")
+    AdviseSoloRun()
     BackToHall
+}
+
+;tag 批量咨询：点一次按钮，等游戏自己把今天的咨询跑完
+AdviseBatchRun() {
+    UserClick(3662, 2038, TrueRatio) ; 客户区约 (1831,1019)，按钮真实范围 1769..1894 × 994..1044
+    Sleep 3000
+    waiting := 0
+    while (waiting < 20) {
+        waiting++
+        Sleep 3000
+        exists := false, enabled := false
+        AdviseBatchStat(&exists, &enabled)
+        if !enabled
+            break
+        ; 过了十来秒还是蓝的，多半是弹了对话或结算，按一下 ] 推进
+        if (waiting = 3 || waiting = 8) {
+            AddLog("批量咨询还没走完，按一次 ] 推进")
+            Send "{]}"
+            Sleep 1500
+        }
+    }
+    exists := false, enabled := false
+    AdviseBatchStat(&exists, &enabled)
+    if enabled {
+        AddLog("批量咨询好像没点开（可能弹了确认框），按一次 ESC 关掉，请截图反馈", "MAROON")
+        Send "{Esc}"
+        Sleep 1500
+    }
+    else
+        AddLog("批量咨询结束", "GREEN")
+    Sleep 1500
+}
+
+;tag 逐个咨询：点左上角第一个角色，再一个一个往下点，直到咨询次数用完
+AdviseSoloRun() {
+    AddLog("点开左上角第一个角色")
+    UserClick(766, 710, TrueRatio) ; 客户区约 (383,355)
+    Sleep 2500
+    if !AdviseOnDetail() {
+        AddLog("没能打开角色详情页，放弃逐个咨询", "MAROON")
+        return
+    }
+    consulted := 0, miss := 0
+    Loop 30 {
+        fastAvail := false, normAvail := false, stat := ""
+        AdvisePanelStat(&fastAvail, &normAvail, &stat)
+        AddLog("角色面板：" stat)
+        if (!fastAvail && !normAvail) {
+            miss++
+            AddLog("当前角色点不了咨询（按钮是灰的），切下一个", "Olive")
+            if (miss >= 6) {
+                AddLog("连续 " miss " 个角色都点不了咨询，认为今天的咨询次数已经用完", "Olive")
+                break
+            }
+            AdviseNextNikke()
+            continue
+        }
+        miss := 0
+        if fastAvail {
+            AddLog("点「快速咨询」")
+            UserClick(2172, 1630, TrueRatio) ; 客户区约 (1086,815)
+            Sleep 1500
+            AdviseDismissPopup()
+        }
+        else {
+            AddLog("点「咨询」")
+            UserClick(2172, 1790, TrueRatio) ; 客户区约 (1086,895)
+            Sleep 1500
+            if AdviseDismissPopup()
+                Sleep 500
+            AdviseAdvanceDialog()
+        }
+        consulted++
+        AddLog("已咨询 " consulted " 个妮姬（" (fastAvail ? "快速咨询" : "普通咨询") "）", "GREEN")
+        AdviseNextNikke()
+    }
+    AddLog("逐个咨询一共完成 " consulted " 次", "GREEN")
+}
+
+;tag 切到下一个妮姬（详情页右边缘的白色箭头，认不出来就按固定位置点）
+AdviseNextNikke() {
+    if (ok := FindText(&X, &Y, NikkeX + 0.955 * NikkeW . " ", NikkeY + 0.395 * NikkeH . " ", NikkeX + 0.999 * NikkeW . " ", NikkeY + 0.485 * NikkeH . " ", 0.2 * PicTolerance, 0.2 * PicTolerance, FindText().PicLib("咨询·向右的图标"), , 0, , , , , TrueRatio, TrueRatio)) {
+        FindText().Click(X, Y, "L")
+    }
+    else
+        UserClick(3760, 1000, TrueRatio) ; 客户区约 (1880,500)
+    Sleep 1800
+}
+
+;tag 角色详情页的「送礼」橙色按钮在不在（在就说明还停在详情页）
+AdviseGiftVisible() {
+    return (AdviseRegionRatio(0.375, 0.731, 0.465, 0.860, "orange") > 0.45)
+}
+
+;tag 是不是停在角色详情页
+;国服实测：详情页右侧有一枚白色右箭头（模板命中在 1886,471 附近），咨询列表页同一区域是角色卡、没有箭头；
+;橙色的「送礼」按钮也是详情页独有。两者任一成立就认为还停在详情页，比只看橙色稳
+AdviseOnDetail() {
+    if (ok := FindText(&X, &Y, NikkeX + 0.945 * NikkeW . " ", NikkeY + 0.380 * NikkeH . " ", NikkeX + 0.999 * NikkeW . " ", NikkeY + 0.500 * NikkeH . " ", 0.2 * PicTolerance, 0.2 * PicTolerance, FindText().PicLib("咨询·向右的图标"), , 0, , , , , TrueRatio, TrueRatio))
+        return true
+    return (AdviseRegionRatio(0.375, 0.731, 0.465, 0.860, "orange") > 0.35)
+}
+
+;tag 角色详情页两个咨询按钮的状态（灰=点不了，蓝或很亮=能点）
+AdvisePanelStat(&fastAvail, &normAvail, &stat) {
+    fastAvail := false, normAvail := false
+    fb := AdviseRegionStat(0.512, 0.734, 0.620, 0.776)
+    nb := AdviseRegionStat(0.512, 0.798, 0.620, 0.826)
+    fastAvail := (fb.blue > 0.30 || fb.bright > 200)
+    normAvail := (nb.blue > 0.30 || nb.bright > 200)
+    stat := "快速咨询(蓝" Round(fb.blue * 100) "%,亮" fb.bright ") 咨询(蓝" Round(nb.blue * 100) "%,亮" nb.bright ")"
+}
+
+;tag 区域比例统计：kind = "orange" / "blue"
+AdviseRegionRatio(x1, y1, x2, y2, kind) {
+    st := AdviseRegionStat(x1, y1, x2, y2)
+    return (kind = "orange") ? st.orange : st.blue
+}
+
+;tag 区域里的颜色占比和平均亮度
+AdviseRegionStat(x1, y1, x2, y2) {
+    px1 := Round(NikkeX + x1 * NikkeW), py1 := Round(NikkeY + y1 * NikkeH)
+    px2 := Round(NikkeX + x2 * NikkeW), py2 := Round(NikkeY + y2 * NikkeH)
+    RefreshShot(px1, py1, px2, py2) ; 采样前按采样区整块截屏
+    f := FindText()
+    n := 0, blue := 0, orange := 0, sum := 0
+    y := py1
+    while (y <= py2) {
+        x := px1
+        while (x <= px2) {
+            c := f.GetColor(x, y)
+            r := (c >> 16) & 0xFF, g := (c >> 8) & 0xFF, b := c & 0xFF
+            n++
+            sum += (r + g + b) / 3
+            if (b > 170 && (b - r) > 90 && g > 110 && g < 230)
+                blue++
+            if (r > 220 && g > 120 && g < 200 && b < 100)
+                orange++
+            x += 2
+        }
+        y += 2
+    }
+    if !n
+        return { blue: 0, orange: 0, bright: 0 }
+    return { blue: blue / n, orange: orange / n, bright: Round(sum / n) }
+}
+
+;tag 点掉咨询时的弹窗（国际服认白勾，国服认蓝色主按钮）
+AdviseDismissPopup() {
+    if (ok := FindText(&X := "wait", &Y := 2, NikkeX + 0.450 * NikkeW . " ", NikkeY + 0.450 * NikkeH . " ", NikkeX + 0.660 * NikkeW . " ", NikkeY + 0.700 * NikkeH . " ", 0.3 * PicTolerance, 0.3 * PicTolerance, FindText().PicLib("带圈白勾"), , , , , , , TrueRatio, TrueRatio)) {
+        Sleep 500
+        FindText().Click(X, Y, "L")
+        Sleep 800
+        return true
+    }
+    if FindBlueButton(Round(NikkeX + 0.420 * NikkeW), Round(NikkeY + 0.450 * NikkeH), Round(NikkeX + 0.680 * NikkeW), Round(NikkeY + 0.700 * NikkeH), &bx, &by) {
+        AddLog("点掉咨询弹窗（国服蓝按钮）")
+        FindText().Click(bx, by, "L")
+        Sleep 800
+        return true
+    }
+    return false
+}
+
+;tag 推进单个妮姬的咨询对话（跳过键 + 点选项位），直到回到详情页
+AdviseAdvanceDialog() {
+    Loop 24 {
+        if AdviseOnDetail()
+            break
+        Send "{]}"
+        Sleep 400
+        if AdviseOnDetail()
+            break
+        UserClick(1894, 1440, TrueRatio) ; 客户区约 (947,720) 选项位
+        Sleep 250
+        UserClick(1903, 1615, TrueRatio) ; 客户区约 (951,807) 选项位
+        Sleep 250
+    }
+    if AdviseOnDetail()
+        AddLog("咨询对话已结束")
+    else {
+        AddLog("咨询对话好像没走完，按一次 ESC 兜底", "MAROON")
+        Send "{Esc}"
+    }
+}
+;tag 咨询列表页右下角的「批量咨询」按钮状态
+;exists：按钮在（灰或蓝都算在，用来判断是否已经进入咨询页）；enabled：按钮是蓝的（今天还有次数）
+AdviseBatchStat(&exists, &enabled) {
+    exists := false, enabled := false
+    x1 := Round(NikkeX + 0.921 * NikkeW)
+    y1 := Round(NikkeY + 0.919 * NikkeH)
+    x2 := Round(NikkeX + 0.986 * NikkeW)
+    y2 := Round(NikkeY + 0.957 * NikkeH)
+    RefreshShot(x1, y1, x2, y2) ; 采样前按采样区整块截屏
+    f := FindText()
+    total := 0, grey := 0, blue := 0
+    y := y1
+    while (y < y2) {
+        x := x1
+        while (x < x2) {
+            c := f.GetColor(x, y)
+            r := (c >> 16) & 0xFF, g := (c >> 8) & 0xFF, b := c & 0xFF
+            total++
+            mx := Max(r, g, b), mn := Min(r, g, b)
+            if (mn > 140 && mx < 210 && (mx - mn) < 20)
+                grey++
+            if (b > 175 && (b - r) > 85 && g > 115 && g < 220)
+                blue++
+            x += 2
+        }
+        y += 2
+    }
+    if !total
+        return
+    exists := (grey / total > 0.55 || blue / total > 0.55)
+    enabled := (blue / total > 0.55)
 }
 ;tag 花絮鉴赏会
 AwardAppreciation() {
@@ -6406,22 +7042,196 @@ AwardAdviseAward() {
 }
 ;endregion 咨询
 ;region 好友点数收取
+;tag 好友点数（国服）
+;国服差异：大厅右侧那列图标整体比国际服低一个图标位（任务/好友/联盟），好友图标中心约在客户区 (1868,350)；
+;面板里也没有国际服那种带红点的按钮，改成「逐行点掉亮粉色的『领取』心」＋「点右下角蓝色『赠送』一次性送出」。
 AwardFriendPoint() {
-    AddLog("开始任务：好友点数", "Fuchsia")
-    while (ok := FindText(&X, &Y, NikkeX + 0.957 * NikkeW . " ", NikkeY + 0.216 * NikkeH . " ", NikkeX + 0.957 * NikkeW + 0.032 * NikkeW . " ", NikkeY + 0.216 * NikkeH + 0.111 * NikkeH . " ", 0.2 * PicTolerance, 0.2 * PicTolerance, FindText().PicLib("好友的图标"), , , , , , , TrueRatio, TrueRatio)) {
-        AddLog("点击好友")
-        FindText().Click(X, Y, "L")
-        Sleep 2000
+    AddLog("开始任务：好友点数（国服）", "Fuchsia")
+    opened := false
+    Loop 4 {
+        if FriendDialogOpen() {
+            opened := true
+            break
+        }
+        if (A_Index <= 2) {
+            AddLog("按国服位置点击好友图标")
+            FindText().Click(Round(NikkeX + 0.9716 * NikkeW), Round(NikkeY + 0.2972 * NikkeH), "L")
+        }
+        else if (ok := FindText(&X, &Y, NikkeX + 0.957 * NikkeW, NikkeY + 0.216 * NikkeH, NikkeX + 0.957 * NikkeW + 0.032 * NikkeW, NikkeY + 0.216 * NikkeH + 0.111 * NikkeH, 0.2 * PicTolerance, 0.2 * PicTolerance, FindText().PicLib("好友的图标"), , 0, , , , , TrueRatio, TrueRatio)) {
+            AddLog("按国际服模板点击好友图标")
+            FindText().Click(X, Y, "L")
+        }
+        else {
+            AddLog("没找到好友图标，重试")
+        }
+        Sleep 2500
     }
-    while (ok := FindText(&X, &Y, NikkeX + 0.628 * NikkeW . " ", NikkeY + 0.822 * NikkeH . " ", NikkeX + 0.628 * NikkeW + 0.010 * NikkeW . " ", NikkeY + 0.822 * NikkeH + 0.017 * NikkeH . " ", 0.4 * PicTolerance, 0.4 * PicTolerance, FindText().PicLib("红点"), , , , , , , TrueRatio, TrueRatio)) {
-        AddLog("点击赠送")
-        FindText().Click(X - 50 * TrueRatio, Y + 50 * TrueRatio, "L")
-        Sleep 2000
+    if !opened {
+        AddLog("没能打开好友面板，跳过该任务", "MAROON")
+        BackToHall
+        return
+    }
+    ; 领取：把列表里亮粉色的「领取」心都点掉，一屏没有就向下滚再找
+    scrolls := 0, passes := 0
+    Loop {
+        passes++
+        if (passes > 8)
+            break
+        FriendDismissNotice()
+        ys := FriendClaimBands()
+        if ys.Length {
+            for i, yy in ys {
+                AddLog("领取好友点数")
+                FindText().Click(Round(NikkeX + 0.5896 * NikkeW), yy, "L")
+                Sleep 900
+                FriendDismissNotice()
+            }
+            continue
+        }
+        if (scrolls >= 3)
+            break
+        scrolls++
+        MouseMove Round(0.5896 * NikkeW), Round(0.55 * NikkeH)
+        Send "{WheelDown 3}"
+        Sleep 1000
+    }
+    ; 赠送：右下角蓝色「赠送」一次完成全部好友的社交点数收发，点完会弹「对所有好友完成社交点数收发」的通知
+    FriendDismissNotice()
+    if FriendSendReady() {
+        sent := false
+        Loop 3 {
+            AddLog("点击赠送")
+            FindText().Click(Round(NikkeX + 0.5828 * NikkeW), Round(NikkeY + 0.8704 * NikkeH), "L")
+            Sleep 2500
+            if FriendDismissNotice() {
+                sent := true
+                break
+            }
+        }
+        if sent
+            AddLog("好友点数已发送")
+        else
+            AddLog("点了赠送但没弹出通知，请截图反馈", "MAROON")
     }
     else {
-        AddLog("好友点数已执行")
+        AddLog("赠送按钮不可用（可能今天已经送完），跳过赠送", "Olive")
     }
+    Send "{Esc}"
+    Sleep 1000
     BackToHall
+}
+;tag 好友面板开着没有（蓝色标题栏）
+FriendDialogOpen() {
+    x1 := Round(NikkeX + 0.3615 * NikkeW)
+    y1 := Round(NikkeY + 0.0824 * NikkeH)
+    x2 := Round(NikkeX + 0.6375 * NikkeW)
+    y2 := Round(NikkeY + 0.2028 * NikkeH)
+    RefreshShot(x1, y1, x2, y2) ; 采样前按采样区整块截屏
+    f := FindText()
+    total := 0, blue := 0
+    y := y1
+    while (y < y2) {
+        x := x1
+        while (x < x2) {
+            c := f.GetColor(x, y)
+            r := (c >> 16) & 0xFF, g := (c >> 8) & 0xFF, b := c & 0xFF
+            total++
+            if (b > 150 && (b - r) > 60 && b > g)
+                blue++
+            x += 4
+        }
+        y += 4
+    }
+    return total && (blue / total > 0.40)
+}
+;tag 列表里「领取」的粉色心都点掉（返回屏幕 y 列表）
+FriendClaimBands() {
+    x1 := Round(NikkeX + 0.5786 * NikkeW)
+    x2 := Round(NikkeX + 0.6031 * NikkeW)
+    y1 := Round(NikkeY + 0.3833 * NikkeH)
+    y2 := Round(NikkeY + 0.7769 * NikkeH)
+    RefreshShot(x1, y1, x2, y2) ; 采样前按采样区整块截屏
+    f := FindText()
+    ys := []
+    y := y1
+    while (y < y2) {
+        n := 0
+        x := x1
+        while (x < x2) {
+            c := f.GetColor(x, y)
+            r := (c >> 16) & 0xFF, g := (c >> 8) & 0xFF, b := c & 0xFF
+            if (r > 190 && g < 120 && b < 150)
+                n++
+            x++
+        }
+        if (n > 4)
+            ys.Push(y)
+        y++
+    }
+    ; 同一颗心跨了十几行，按 20px 合并
+    merged := []
+    for i, v in ys {
+        if (merged.Length && v - merged[merged.Length] < 20)
+            continue
+        merged.Push(v + 7)
+    }
+    if (!merged.Length && ys.Length)
+        merged.Push(ys[1] + 7)
+    return merged
+}
+;tag 右下角「赠送」按钮还是蓝的（可用）
+FriendSendReady() {
+    x1 := Round(NikkeX + 0.5302 * NikkeW)
+    y1 := Round(NikkeY + 0.8611 * NikkeH)
+    x2 := Round(NikkeX + 0.6354 * NikkeW)
+    y2 := Round(NikkeY + 0.8963 * NikkeH)
+    RefreshShot(x1, y1, x2, y2) ; 采样前按采样区整块截屏
+    f := FindText()
+    total := 0, blue := 0
+    y := y1
+    while (y < y2) {
+        x := x1
+        while (x < x2) {
+            c := f.GetColor(x, y)
+            r := (c >> 16) & 0xFF, g := (c >> 8) & 0xFF, b := c & 0xFF
+            total++
+            if (b > 190 && (b - r) > 90 && g > 100)
+                blue++
+            x += 2
+        }
+        y += 2
+    }
+    return total && (blue / total > 0.50)
+}
+;tag 好友的「通知」弹窗（点赠送后会弹「对所有好友完成社交点数收发」）的确认
+FriendDismissNotice() {
+    x1 := Round(NikkeX + 0.4411 * NikkeW)
+    y1 := Round(NikkeY + 0.6037 * NikkeH)
+    x2 := Round(NikkeX + 0.5583 * NikkeW)
+    y2 := Round(NikkeY + 0.6500 * NikkeH)
+    RefreshShot(x1, y1, x2, y2) ; 采样前按采样区整块截屏
+    f := FindText()
+    total := 0, blue := 0
+    y := y1
+    while (y < y2) {
+        x := x1
+        while (x < x2) {
+            c := f.GetColor(x, y)
+            r := (c >> 16) & 0xFF, g := (c >> 8) & 0xFF, b := c & 0xFF
+            total++
+            if (b > 190 && (b - r) > 100 && g > 110)
+                blue++
+            x += 2
+        }
+        y += 2
+    }
+    if (total && (blue / total > 0.55)) {
+        AddLog("点击通知的确认")
+        FindText().Click(Round(NikkeX + 0.4995 * NikkeW), Round(NikkeY + 0.6269 * NikkeH), "L")
+        Sleep 1500
+        return true
+    }
+    return false
 }
 ;endregion 好友点数收取
 ;region 邮箱收取
@@ -6469,116 +7279,230 @@ AwardRanking() {
 }
 ;endregion 方舟排名奖励
 ;region 每日任务收取
+;国服适配摘要（2026-11 实测）：
+;  入口 = 大厅右侧图标列的「任务」图标；面板页签行（每日/每周/主线/成就）是亮蓝色，可当「面板已打开且没被全屏层盖住」的判据；
+;  底部「全部领取」是亮蓝实心按钮，用蓝块识别（灰态是浅灰，蓝占比降到个位数）；
+;  领完会弹国服自己的全屏「奖励」层（底部一行小字「点击领取奖励」）和物品详情弹窗（蓝色「确认」），必须点掉，否则后面点页签/关面板都会被吃掉；
+;  面板 ESC 关不掉，只能点右上角 X。
 AwardDaily() {
     AddLog("开始任务：每日任务收取", "Fuchsia")
-    while (ok := FindText(&X, &Y, NikkeX + 0.874 * NikkeW . " ", NikkeY + 0.073 * NikkeH . " ", NikkeX + 0.874 * NikkeW + 0.011 * NikkeW . " ", NikkeY + 0.073 * NikkeH + 0.019 * NikkeH . " ", 0.4 * PicTolerance, 0.4 * PicTolerance, FindText().PicLib("红点"), , , , , , , TrueRatio, TrueRatio)) {
-        FindText().Click(X, Y, "L")
-        AddLog("点击每日任务图标")
-        if (ok := FindText(&X := "wait", &Y := 3, NikkeX + 0.466 * NikkeW . " ", NikkeY + 0.093 * NikkeH . " ", NikkeX + 0.466 * NikkeW + 0.068 * NikkeW . " ", NikkeY + 0.093 * NikkeH + 0.035 * NikkeH . " ", 0.3 * PicTolerance, 0.3 * PicTolerance, FindText().PicLib("每日任务·MISSION"), , , , , , , TrueRatio, TrueRatio)) {
-            while !(ok := FindText(&X, &Y, NikkeX + 0.548 * NikkeW . " ", NikkeY + 0.864 * NikkeH . " ", NikkeX + 0.548 * NikkeW + 0.093 * NikkeW . " ", NikkeY + 0.864 * NikkeH + 0.063 * NikkeH . " ", 0.3 * PicTolerance, 0.3 * PicTolerance, FindText().PicLib("灰色的全部"), , , , , , , TrueRatio, TrueRatio)) {
-                UserClick(2412, 1905, TrueRatio)
-                AddLog("点击全部领取")
-                Sleep 2000
-            }
-            Sleep 1000
-            BackToHall
+    opened := false
+    Loop 3 {
+        if TaskPanelClear() {
+            opened := true
+            break
         }
+        AddLog("点击右侧的「任务」图标")
+        UserClick(3732, 544, TrueRatio) ; 客户区约 (1866,272)
+        Sleep 2500
+        if TaskPanelClear() {
+            opened := true
+            break
+        }
+        AddLog("任务图标没打开面板，试右上角的圆形任务气泡")
+        UserClick(3366, 202, TrueRatio) ; 客户区约 (1683,101)
+        Sleep 2500
     }
-    else {
-        AddLog("每日任务奖励已领取")
+    if !opened {
+        AddLog("没能打开任务面板，跳过该任务", "MAROON")
         return
     }
+    AddLog("已进入任务面板")
+    TaskClaimAll("每日任务")
+    AddLog("切到每周任务页")
+    UserClick(1758, 352, TrueRatio) ; 客户区约 (879,176)
+    Sleep 1500
+    TaskClaimAll("每周任务")
+    Sleep 800
+    TaskClosePanel()
+    BackToHall
+}
+
+;tag 任务面板是不是开着且没被全屏层盖住（页签行是亮蓝色：实测 51%，大厅同位 0%，盖住时 0%）
+TaskPanelClear() {
+    return (RegionStat(0.360, 0.145, 0.630, 0.175).blue > 0.20)
+}
+
+;tag 任务面板底部「全部领取」能不能点（返回蓝块按钮中心）
+TaskClaimReady(&cx, &cy) {
+    return FindBlueButton(Round(NikkeX + 0.535 * NikkeW), Round(NikkeY + 0.868 * NikkeH), Round(NikkeX + 0.630 * NikkeW), Round(NikkeY + 0.918 * NikkeH), &cx, &cy)
+}
+
+;tag 任务面板里连点「全部领取」，每领完一轮把弹出来的奖励层收掉
+TaskClaimAll(tabName) {
+    Loop 4 {
+        if !TaskClaimReady(&cx, &cy) {
+            AddLog(tabName "：「全部领取」不可点，跳过这一页")
+            return
+        }
+        AddLog(tabName "：点「全部领取」")
+        FindText().Click(cx, cy, "L")
+        Sleep 1800
+        TaskSettle()
+        Sleep 800
+    }
+}
+
+;tag 收掉国服领奖后的全屏「奖励/点击领取奖励」层和物品详情弹窗，直到任务面板重新亮回来
+TaskSettle() {
+    advY := [1394, 1450, 1520, 1578, 1640] ; 客户区约 (697/725/760/789/820)：「点击领取奖励」随奖励条数上下浮动
+    Loop 10 {
+        if TaskPanelClear()
+            return
+        if FindBlueButton(Round(NikkeX + 0.340 * NikkeW), Round(NikkeY + 0.655 * NikkeH), Round(NikkeX + 0.660 * NikkeW), Round(NikkeY + 0.790 * NikkeH), &bx, &by) {
+            AddLog("点掉物品详情弹窗（蓝确认）")
+            FindText().Click(bx, by, "L")
+            Sleep 900
+            continue
+        }
+        UserClick(1932, advY[Mod(A_Index - 1, advY.Length) + 1], TrueRatio)
+        Sleep 900
+    }
+}
+
+;tag 关掉任务面板（国服 ESC 无效，只能点右上角 X）
+TaskClosePanel() {
+    Loop 3 {
+        UserClick(2414, 136, TrueRatio) ; 客户区约 (1207,68)
+        Sleep 1200
+        if !TaskPanelClear()
+            break
+    }
+    Sleep 500
 }
 ;endregion 每日任务收取
 ;region 通行证收取
+;国服适配摘要（2026-11 实测）：
+;  大厅右侧平时只显示一条 MISSION PASS 横幅，左边有个三横线的「展开」按钮，展开后竖向列出全部通行证，
+;  每条横幅右上角有红点＝有没领的（收起状态下展开按钮自己也有个红点，但模板认不出来，所以「扫不到就点一下展开再扫」）；
+;  面板判据用右上角蓝底「购买PASS」（实测 79~83%，被全屏奖励层盖住时 0%）；
+;  底部「全部领取」位置比国际服靠下，用蓝块识别；先领「任务」页（领完会 RANK UP 升级），再回「奖励」页领升级解锁的奖励；
+;  领完同样会弹全屏「奖励/点击领取奖励」层 + 物品详情弹窗，必须点掉；面板 ESC 关不掉，只能点 X。
 ;tag 通行证任务主逻辑
 AwardPass() {
     AddLog("开始任务：通行证", "Fuchsia")
     t := 0
-    Y_Offset := 0  ; 默认偏移量为 0
-    ; 1. 检测节日特殊活动图标
-    if (ok := FindText(&X, &Y, NikkeX + 0.968 * NikkeW, NikkeY + 0.121 * NikkeH, NikkeX + 0.968 * NikkeW + 0.030 * NikkeW, NikkeY + 0.121 * NikkeH + 0.048 * NikkeH, 0.3 * PicTolerance, 0.3 * PicTolerance, FindText().PicLib("节日特殊活动的图标"), , , , , , , TrueRatio, TrueRatio)) {
-        AddLog("检测到节日特殊活动，启用坐标偏移模式", "MAROON")
-        Y_Offset := 0.043  ; 根据预估值推算的纵坐标偏移比例
-    }
-    while true {
-        if (t > 3) {
-            AddLog("通行证任务异常跳出：尝试次数过多", "MAROON")
-            break
+    while (t < 5) {
+        dots := PassBannerDots()
+        if !dots.Length {
+            AddLog("右侧没扫到通行证红点，点一下展开按钮再确认")
+            UserClick(3402, 362, TrueRatio) ; 客户区约 (1701,181)
+            Sleep 1600
+            dots := PassBannerDots()
         }
-        ; --- 通行证 3+ 模式检测 ---
-        if (ok := FindText(&X, &Y, NikkeX + 0.879 * NikkeW, NikkeY + (0.150 + Y_Offset) * NikkeH, NikkeX + 0.879 * NikkeW + 0.019 * NikkeW, NikkeY + (0.150 + Y_Offset) * NikkeH + 0.037 * NikkeH, 0.3 * PicTolerance, 0.3 * PicTolerance, FindText().PicLib("通行证·3+"), , , , , , , TrueRatio, TrueRatio)) {
-            AddLog("3+通行证模式")
-            FindText().Click(X, Y, "L")
-            Sleep 1000
-            ; 检查内部垂直排布的红点
-            if (ok := FindText(&X := "wait", &Y := 2, NikkeX + 0.985 * NikkeW, NikkeY + (0.124 + Y_Offset) * NikkeH, NikkeX + 0.985 * NikkeW + 0.015 * NikkeW, NikkeY + (0.124 + Y_Offset) * NikkeH + 0.261 * NikkeH, 0.2 * PicTolerance, 0.2 * PicTolerance, FindText().PicLib("红点"), , , , , , 3, TrueRatio, TrueRatio)) {
-                FindText().Click(X - 20 * TrueRatio, Y + 20 * TrueRatio, "L")
-                t += 1
-                AddLog("执行第" t "个通行证")
-                OneAwardPass()
-                BackToHall()
-                continue
-            }
-        }
-        ; --- 通行证 2 模式检测 ---
-        else if (ok := FindText(&X, &Y, NikkeX + 0.878 * NikkeW, NikkeY + (0.151 + Y_Offset) * NikkeH, NikkeX + 0.878 * NikkeW + 0.021 * NikkeW, NikkeY + (0.151 + Y_Offset) * NikkeH + 0.036 * NikkeH, 0.3 * PicTolerance, 0.3 * PicTolerance, FindText().PicLib("通行证·2"), , , , , , , TrueRatio, TrueRatio)) {
-            AddLog("2通行证模式")
-            FindText().Click(X, Y, "L")
-            Sleep 1000
-        }
-        else {
-            AddLog("1通行证模式")
-        }
-        ; --- 检查主界面通行证入口红点 ---
-        if (ok := FindText(&X := "wait", &Y := 2, NikkeX + 0.983 * NikkeW, NikkeY + (0.131 + Y_Offset) * NikkeH, NikkeX + 0.983 * NikkeW + 0.017 * NikkeW, NikkeY + (0.131 + Y_Offset) * NikkeH + 0.029 * NikkeH, 0.3 * PicTolerance, 0.3 * PicTolerance, FindText().PicLib("红点"), , , , , , , TrueRatio, TrueRatio)) {
-            FindText().Click(X - 50 * TrueRatio, Y + 50 * TrueRatio, "L")
-            t += 1
-            AddLog("执行第" t "个通行证")
-            OneAwardPass()
-            BackToHall()
-            continue
-        }
-        ; --- 检测是否有其他未完成的通行证图标红点 ---
-        if (ok := FindText(&X, &Y, NikkeX + 0.890 * NikkeW, NikkeY + (0.149 + Y_Offset) * NikkeH, NikkeX + 0.890 * NikkeW + 0.010 * NikkeW, NikkeY + (0.149 + Y_Offset) * NikkeH + 0.016 * NikkeH, 0.4 * PicTolerance, 0.4 * PicTolerance, FindText().PicLib("红点"), , , , , , , TrueRatio * 0.8, TrueRatio * 0.8)) {
-            FindText().Click(X, Y, "L")
-        }
-        else {
+        if !dots.Length {
             AddLog("通行证已全部收取")
             break
         }
-    }
-    loop 3 {
-        Confirm()
-    }
-}
-;tag 执行一次通行证
-OneAwardPass() {
-    Sleep 3000
-    loop 2 {
-        if A_Index = 1 {
-            UserClick(2184, 670, TrueRatio) ;点任务
+        AddLog("点第 1 个带红点的通行证横幅")
+        FindText().Click(dots[1].x - 20 * TrueRatio, dots[1].y + 20 * TrueRatio, "L")
+        ; 面板是异步加载的，早点判会判成「没打开」，所以最多等 8 秒
+        opened := false
+        Loop 8 {
             Sleep 1000
-        }
-        if A_Index = 2 {
-            UserClick(1642, 670, TrueRatio) ;点奖励
-            Sleep 1000
-        }
-        if (ok := FindText(&X, &Y, NikkeX + 0.430 * NikkeW . " ", NikkeY + 0.850 * NikkeH . " ", NikkeX + 0.430 * NikkeW + 0.143 * NikkeW . " ", NikkeY + 0.850 * NikkeH + 0.052 * NikkeH . " ", 0.3 * PicTolerance, 0.3 * PicTolerance, FindText().PicLib("特殊通行证·全部领取"), , , , , , , TrueRatio, TrueRatio)) and !(ok := FindText(&X, &Y, NikkeX + 0.429 * NikkeW . " ", NikkeY + 0.903 * NikkeH . " ", NikkeX + 0.429 * NikkeW + 0.143 * NikkeW . " ", NikkeY + 0.903 * NikkeH + 0.050 * NikkeH . " ", 0.3 * PicTolerance, 0.3 * PicTolerance, FindText().PicLib("SP灰色的全部"), , , , , , , TrueRatio, TrueRatio)) {
-            loop 3 {
-                FindText().Click(X, Y, "L") ;特殊活动点领取
-                Sleep 1000
+            if PassPanelOpen() {
+                opened := true
+                break
             }
+        }
+        if !opened {
+            AddLog("通行证面板 8 秒内没打开，跳过这一条", "MAROON")
+            t++
+            BackToHall
             continue
         }
-        if !(ok := FindText(&X, &Y, NikkeX + 0.430 * NikkeW . " ", NikkeY + 0.851 * NikkeH . " ", NikkeX + 0.430 * NikkeW + 0.140 * NikkeW . " ", NikkeY + 0.851 * NikkeH + 0.125 * NikkeH . " ", 0.3 * PicTolerance, 0.3 * PicTolerance, FindText().PicLib("灰色的全部"), , , , , , , TrueRatio, TrueRatio)) and !(ok := FindText(&X, &Y, NikkeX + 0.430 * NikkeW . " ", NikkeY + 0.851 * NikkeH . " ", NikkeX + 0.430 * NikkeW + 0.140 * NikkeW . " ", NikkeY + 0.851 * NikkeH + 0.125 * NikkeH . " ", 0.3 * PicTolerance, 0.3 * PicTolerance, FindText().PicLib("SP灰色的全部"), , , , , , , TrueRatio, TrueRatio)) {
-            loop 3 {
-                UserClick(2168, 2020, TrueRatio) ;点领取
-                Sleep 1000
+        t++
+        AddLog("执行第" t "个通行证")
+        OneAwardPass()
+        Sleep 800
+        BackToHall
+    }
+    if (t > 0)
+        AddLog("通行证收取结束", "GREEN")
+}
+
+;tag 大厅右侧竖排的通行证红点（展开后每个横幅右上角各一个）
+PassBannerDots() {
+    return (ok := FindText(&X, &Y, NikkeX + 0.980 * NikkeW, NikkeY + 0.115 * NikkeH, NikkeX + 1.000 * NikkeW, NikkeY + 0.400 * NikkeH, 0.2 * PicTolerance, 0.2 * PicTolerance, FindText().PicLib("红点"), , 1, , , , , TrueRatio, TrueRatio)) ? ok : []
+}
+
+;tag 通行证面板底部「全部领取」按钮本体（客户区 0.425~0.572 x、0.918~0.966 y）
+;学国际服的思路：不认按钮的固定颜色，只认这颗按钮自己的特征 —— 国际服用「彩色全部领取」「灰色全部领取」两张图
+;去区分「能点」和「已领完」；国服这边直接用像素统计做同样的事，任何配色都能认：
+;  1) 按钮在不在：这块区域里亮像素（亮度>190）占比。实测 金票可点 30%、蓝票已领完 28%、金票已领完 24%、大厅 2~4%
+;  2) 能不能点：填充有没有颜色（饱和度占比，max-min>55）。实测 可点 57%~69%、已领完一律 0%（国服把禁用态做成灰底灰字）
+PassClaimBox() {
+    return RegionStat(0.425, 0.918, 0.572, 0.966)
+}
+
+PassPanelOpen() {
+    return (PassClaimBox().hi > 0.14)
+}
+
+;tag 通行证面板底部「全部领取」能不能点（有彩色填充才可点，灰底灰字＝已领完）
+PassClaimReady(&cx, &cy) {
+    st := PassClaimBox()
+    if !(st.hi > 0.14 && st.sat > 0.20)
+        return false
+    cx := Round(NikkeX + 0.500 * NikkeW)
+    cy := Round(NikkeY + 0.941 * NikkeH)
+    return true
+}
+
+;tag 收掉通行证领奖后的全屏奖励层 / 升级动画 / 物品详情弹窗，直到面板重新亮回来
+PassSettle() {
+    advY := [1394, 1450, 1520, 1578, 1640] ; 客户区约 (697/725/760/789/820)：「点击领取奖励」随奖励条数上下浮动
+    Loop 10 {
+        if PassPanelOpen()
+            return
+        if FindBlueButton(Round(NikkeX + 0.340 * NikkeW), Round(NikkeY + 0.655 * NikkeH), Round(NikkeX + 0.660 * NikkeW), Round(NikkeY + 0.790 * NikkeH), &bx, &by) {
+            AddLog("点掉物品详情弹窗（蓝确认）")
+            FindText().Click(bx, by, "L")
+            Sleep 900
+            continue
+        }
+        UserClick(1932, advY[Mod(A_Index - 1, advY.Length) + 1], TrueRatio)
+        Sleep 900
+    }
+}
+
+;tag 关掉通行证面板（国服 ESC 无效，只能点右上角 X）
+PassClosePanel() {
+    Loop 3 {
+        UserClick(2414, 136, TrueRatio) ; 客户区约 (1207,68)
+        Sleep 1200
+        if !PassPanelOpen()
+            break
+    }
+    Sleep 500
+}
+
+;tag 执行一次通行证
+OneAwardPass() {
+    Sleep 2500
+    loop 2 {
+        if (A_Index = 1) {
+            AddLog("通行证：切到「任务」页")
+            UserClick(2204, 713, TrueRatio) ; 客户区约 (1102,356)
+        }
+        else {
+            AddLog("通行证：切到「奖励」页")
+            UserClick(1643, 713, TrueRatio) ; 客户区约 (822,356)
+        }
+        Sleep 1600
+        Loop 3 {
+            if !PassClaimReady(&cx, &cy) {
+                AddLog("通行证：这一页「全部领取」不可点")
+                break
             }
+            AddLog("通行证：点「全部领取」")
+            FindText().Click(cx, cy, "L")
+            Sleep 1800
+            PassSettle()
+            Sleep 800
         }
     }
-    GoBack()
+    PassClosePanel()
 }
 ;endregion 通行证收取
 ;region 每日免费招募
