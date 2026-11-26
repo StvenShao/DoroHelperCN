@@ -22,8 +22,8 @@ currentVersion := "v1.15.10"
 ; 判断拓展名
 SplitPath A_ScriptFullPath, , , &scriptExtension
 scriptExtension := StrLower(scriptExtension)
-usr := "1204244136"
-repo := "DoroHelper"
+usr := "StvenShao"
+repo := "DoroHelperCN"
 ;endregion 设置常量
 ;region 设置变量
 ;tag 简单开关
@@ -178,7 +178,7 @@ global g_numeric_settings := Map(
     "Version", currentVersion,          ; 版本号
     "UpdateChannels", "正式版",         ; 更新渠道
     "DownloadSource", "GitHub",         ; 下载源
-    "GroupDataSource", "API",            ; 用户组数据源 (API/Gitee/GitHub/jsDelivr)
+    "GroupDataSource", "GitHub",         ; 用户组数据源 (API/GitHub/jsDelivr)
     "PreferredHttpRequest", "WinHttp.WinHttpRequest.5.1", ; HTTP 请求优先级
     "VerificationMethod", "V6",         ; 验证方式 (V6/V4)
     "UserID", "",                        ; 用户ID
@@ -446,9 +446,9 @@ cbSkipGroupCheck := AddCheckboxSetting(doroGui, "SkipUserGroupCheckForFreeUser",
 doroGui.Tips.SetTip(cbSkipGroupCheck, "勾选后，非会员用户启动时将跳过用户组检查以节省时间`nSkip user group check for free users to save startup time")
 g_settingPages["Settings"].Push(cbSkipGroupCheck)
 TextGroupDataSource := doroGui.Add("Text", "R1 +0x0100", "用户组数据源")
-doroGui.Tips.SetTip(TextGroupDataSource, "用户组数据源镜像`nAPI:在线API(推荐)|Gitee:国内源|GitHub:官方源|jsDelivr:CDN加速`nUser Group Data Source Mirror`nAPI: Online (Recommended) | Gitee: Domestic | GitHub: Official | jsDelivr: CDN Accelerated")
+doroGui.Tips.SetTip(TextGroupDataSource, "用户组数据源镜像`nGitHub:官方源(推荐)|jsDelivr:CDN加速|API:在线API`nUser Group Data Source Mirror`nGitHub: Official (Recommended) | jsDelivr: CDN Accelerated | API: Online")
 g_settingPages["Settings"].Push(TextGroupDataSource)
-cbGroupDataSource := doroGui.AddDropDownList("x+20 w100", ["API", "Gitee", "GitHub", "jsDelivr"])
+cbGroupDataSource := doroGui.AddDropDownList("x+20 w100", ["API", "GitHub", "jsDelivr"])
 cbGroupDataSource.Text := g_numeric_settings["GroupDataSource"]
 cbGroupDataSource.OnEvent("Change", (Ctrl, Info) => g_numeric_settings["GroupDataSource"] := Ctrl.Text)
 g_settingPages["Settings"].Push(cbGroupDataSource)
@@ -1355,7 +1355,7 @@ Initialization() {
     WinGetPos &NikkeXP, &NikkeYP, &NikkeWP, &NikkeHP, nikkeID
     global TrueRatio := NikkeH / stdScreenH
     GameRatio := Round(NikkeW / NikkeH, 3)
-    AddLog("项目地址https://github.com/1204244136/DoroHelper")
+    AddLog("项目地址https://github.com/StvenShao/DoroHelperCN")
     AddLog("当前的doro版本是" currentVersion)
     AddLog("屏幕宽度是" A_ScreenWidth)
     AddLog("屏幕高度是" A_ScreenHeight)
@@ -2458,9 +2458,9 @@ GetUserLocaleName() {
 MsgSponsor(*) {
     global guiSponsor
     global g_PriceMap, g_DefaultRegionPriceData, g_MembershipLevels, LocaleName, g_numeric_settings
-    ; 检查用户组数据源是否为 API
-    if g_numeric_settings["GroupDataSource"] != "API" {
-        result := MsgBox("当前「用户组数据源」设置为 " . g_numeric_settings["GroupDataSource"] . "，建议改为「API」以获得更快的响应速度和更准确的会员信息。`n`n是否现在前往设置中修改？", "数据源提示", "YesNo Iconi")
+    ; 检查用户组数据源是否为 GitHub 官方源
+    if g_numeric_settings["GroupDataSource"] != "GitHub" {
+        result := MsgBox("当前「用户组数据源」设置为 " . g_numeric_settings["GroupDataSource"] . "，建议改为「GitHub」以与其他用户保持一致的会员信息。`n`n是否现在前往设置中修改？", "数据源提示", "YesNo Iconi")
         if result = "Yes" {
             ShowSetting("Settings")
             return
@@ -3220,15 +3220,14 @@ FetchAndParseGroupData(version := 4) {
     local groupFileName := "GroupArrayV" . version . ".json"
     ; 定义所有可用的镜像站点
     local mirrors := Map(
-        "Gitee", "https://gitee.com/con_sul/DoroHelper/raw/main/group/" . groupFileName,
-        "GitHub", "https://raw.githubusercontent.com/1204244136/DoroHelper/refs/heads/main/group/" . groupFileName,
-        "jsDelivr", "https://cdn.jsdelivr.net/gh/1204244136/DoroHelper@main/group/" . groupFileName
+        "GitHub", "https://raw.githubusercontent.com/StvenShao/DoroHelperCN/refs/heads/main/group/" . groupFileName,
+        "jsDelivr", "https://cdn.jsdelivr.net/gh/StvenShao/DoroHelperCN@main/group/" . groupFileName
     )
     if (version != 4) {
         mirrors["API"] := "https://doropay.top/api/members/v" . version
     }
     ; 获取用户选择的源或使用默认值
-    local preferredSource := g_numeric_settings.Has("GroupDataSource") ? g_numeric_settings["GroupDataSource"] : "API"
+    local preferredSource := g_numeric_settings.Has("GroupDataSource") ? g_numeric_settings["GroupDataSource"] : "GitHub"
     local sourceOrder := []
     ; 构建镜像访问顺序：优先使用用户选择的源，然后尝试其他源
     sourceOrder.Push(preferredSource)
@@ -3497,7 +3496,7 @@ CheckUserGroup(forceUpdate := false) {
     g_numeric_settings["UserLevel"] := highestMembership["UserLevel"]
     highestMembership["IsPremium"] := g_numeric_settings["UserLevel"] > 0
     ; 获取当前使用的数据源
-    local currentSource := g_numeric_settings.Has("GroupDataSource") ? g_numeric_settings["GroupDataSource"] : "API"
+    local currentSource := g_numeric_settings.Has("GroupDataSource") ? g_numeric_settings["GroupDataSource"] : "GitHub"
     if (highestMembership["IsPremium"]) {
         local formattedExpiryDate := SubStr(highestMembership["VirtualExpiryDate"], 1, 4) . "-" . SubStr(highestMembership["VirtualExpiryDate"], 5, 2) . "-" . SubStr(highestMembership["VirtualExpiryDate"], 7, 2)
         if (g_numeric_settings["UserLevel"] == 3) {
@@ -3737,7 +3736,7 @@ CheckUserGroupByHashForGUI(inputHash) {
                 rawHashInfo["LastActiveDate"]
             )
         }
-        local currentSource := g_numeric_settings.Has("GroupDataSource") ? g_numeric_settings["GroupDataSource"] : "API"
+        local currentSource := g_numeric_settings.Has("GroupDataSource") ? g_numeric_settings["GroupDataSource"] : "GitHub"
         local resultMessage := "查询用户ID: " . inputHash . "`n"
         resultMessage .= "验证方式: " . matchMethod . "`n"
         resultMessage .= "数据源: " . currentSource . "`n"
@@ -3825,7 +3824,7 @@ CheckUserGroupByHash(inputHash) {
             )
         }
         ; 获取当前使用的数据源
-        local currentSource := g_numeric_settings.Has("GroupDataSource") ? g_numeric_settings["GroupDataSource"] : "API"
+        local currentSource := g_numeric_settings.Has("GroupDataSource") ? g_numeric_settings["GroupDataSource"] : "GitHub"
         local resultMessage := "查询哈希值: " . inputHash . "`n"
         resultMessage .= "验证方式: " . matchMethod . "`n"
         resultMessage .= "数据源: " . currentSource . "`n"
@@ -4111,6 +4110,9 @@ LoadSettings() {
         readValue := IniRead("settings.ini", "NumericSettings", key, defaultValue)
         g_numeric_settings[key] := readValue
     }
+    ; 兼容旧配置：Gitee 源已移除，旧值或非法值回退到 GitHub
+    if !(g_numeric_settings["GroupDataSource"] ~= "^(API|GitHub|jsDelivr)$")
+        g_numeric_settings["GroupDataSource"] := "GitHub"
 }
 ;tag 保存数据
 SaveSettings(*) {
